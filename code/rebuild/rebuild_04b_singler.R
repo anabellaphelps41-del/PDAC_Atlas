@@ -5,14 +5,14 @@
 # Usage:  Rscript rebuild_04b_singler.R <subset> [resolution]
 #         <subset> in {stromal, TNK, Bcell}   [resolution] default 0.6
 #
-# Input : subset_<subset>_harmony.rds   (already carries the resolution columns)
+# Input : subset_<subset>_harmony.qs2   (already carries the resolution columns)
 #         ref/celldex_HPCA.rds, ref/celldex_BlueprintEncode.rds
 #         (cache them on a LOGIN node first: Rscript ~/setup_singler_refs.R)
 # Output: step4b_<subset>_res<r>_singler_percell.tsv
 #         step4b_<subset>_res<r>_gate.tsv     <<< the table you act on
 #         step4b_<subset>_res<r>_singler.pdf
 #         PROVENANCE_step4b_<subset>_res<r>.txt
-#         re-saves subset_<subset>_harmony.rds with singler_* columns attached
+#         re-saves subset_<subset>_harmony.qs2 with singler_* columns attached
 #
 # -----------------------------------------------------------------------------
 # WHY THIS EXISTS
@@ -59,9 +59,11 @@ SUBSET <- if (length(args) >= 1) args[1] else "stromal"
 RES    <- if (length(args) >= 2) as.numeric(args[2]) else 0.6
 stopifnot(SUBSET %in% c("stromal", "TNK", "Bcell"))
 
+source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj() / save_obj()
+
 DIR     <- Sys.getenv("PDAC_REBUILD_DIR", "/ix/tbruno/anp795/PDAC_Atlas/rebuild_v3")
 REF_DIR <- "/ix/tbruno/anp795/PDAC_Atlas/ref"   # shared, not per rebuild
-IN      <- file.path(DIR, sprintf("subset_%s_harmony.rds", SUBSET))
+IN      <- file.path(DIR, sprintf("subset_%s_harmony.qs2", SUBSET))
 tag     <- sprintf("%s_res%s", SUBSET, RES)
 F_CELL  <- file.path(DIR, sprintf("step4b_%s_singler_percell.tsv", tag))
 F_GATE  <- file.path(DIR, sprintf("step4b_%s_gate.tsv", tag))
@@ -139,7 +141,7 @@ map_label <- function(x) {
 # ============================ 1. load ========================================
 ts("subset = ", SUBSET, " | resolution = ", RES, " | threads = ", NTHREADS)
 ts("loading ", IN)
-sub <- readRDS(IN)
+sub <- read_obj(IN)
 ts("loaded: ", format(nrow(sub), big.mark = ","), " genes x ",
    format(ncol(sub), big.mark = ","), " cells")
 
@@ -331,7 +333,7 @@ print(ggplot(gl, aes(cluster, n, fill = pass)) + geom_col() +
 dev.off()
 
 # ============================ 6. save + provenance ===========================
-saveRDS(sub, IN, compress = FALSE)
+save_obj(sub, IN)
 ts("re-wrote ", IN, " with singler_* columns attached")
 
 writeLines(c(

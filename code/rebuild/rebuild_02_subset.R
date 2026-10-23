@@ -3,10 +3,10 @@
 # Step 2 of the PDAC atlas rebuild: split the harmonized object into the three
 # compartments that get their own pipeline (T/NK, stromal/CAF, B/plasma).
 #
-# Input : <DIR>/atlas_harmonized_counts_v3.rds   (rebuild_01_harmonize.R)
+# Input : <DIR>/atlas_harmonized_counts_v3.qs2   (rebuild_01_harmonize.R)
 #         <DIR>/sample_manifest.tsv               (rebuild_00m_manifest.R)
 #         <DIR>/doublets_scDblFinder_v3.tsv       (rebuild_01c_doublets.R)
-# Output: subset_TNK.rds, subset_stromal.rds, subset_Bcell.rds  (+ PROVENANCE_02_subset.txt)
+# Output: subset_TNK.qs2, subset_stromal.qs2, subset_Bcell.qs2  (+ PROVENANCE_02_subset.txt)
 #
 # Notes:
 #   - Subsetting uses celltype_level2, NOT level1. level1/level2 disagree on
@@ -30,9 +30,11 @@ suppressPackageStartupMessages({
   library(data.table)
 })
 
+source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj() / save_obj()
+
 ROOT <- "/ix/tbruno/anp795/PDAC_Atlas"
 DIR  <- Sys.getenv("PDAC_REBUILD_DIR", file.path(ROOT, "rebuild_v3"))
-IN   <- file.path(DIR, "atlas_harmonized_counts_v3.rds")
+IN   <- file.path(DIR, "atlas_harmonized_counts_v3.qs2")
 MAN  <- file.path(DIR, "sample_manifest.tsv")
 DBL  <- file.path(DIR, "doublets_scDblFinder_v3.tsv")
 OUT  <- DIR
@@ -47,7 +49,7 @@ msg <- function(...) {
 # Load and validate
 # --------------------------------------------------------------------------
 msg("loading ", IN)
-obj <- readRDS(IN)
+obj <- read_obj(IN)
 msg("loaded: ", format(nrow(obj), big.mark = ","), " genes x ",
     format(ncol(obj), big.mark = ","), " cells")
 
@@ -161,9 +163,9 @@ for (nm in names(defs)) {
   msg("cells per tissue_class:")
   print(table(s$tissue_class))
 
-  f <- file.path(OUT, paste0("subset_", nm, ".rds"))
-  msg("writing ", f, " (compress=FALSE)")
-  saveRDS(s, f, compress = FALSE)
+  f <- file.path(OUT, paste0("subset_", nm, ".qs2"))
+  msg("writing ", f, " (qs2)")
+  save_obj(s, f)
   msg("wrote ", round(file.size(f) / 2^30, 2), " GB")
 
   written[[nm]] <- data.frame(
@@ -215,7 +217,7 @@ writeLines(c(
   "  primary_or_metastatic, patient_diagnosis, treatment_status, scDblFinder_score/class,",
   "  percent.mt.recomputed.",
   "",
-  "Everything saved with compress=FALSE (loads in minutes; the filesystem compresses ~2.5x)."
+  "Objects saved as qs2 (zstd, ~6x smaller than uncompressed .rds; see io.R)."
 ), prov)
 
 msg("wrote ", prov)

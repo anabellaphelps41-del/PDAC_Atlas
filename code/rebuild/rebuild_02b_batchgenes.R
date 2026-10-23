@@ -26,6 +26,8 @@ suppressPackageStartupMessages({
   library(Matrix)
 })
 
+source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj() / save_obj()
+
 DIR <- Sys.getenv("PDAC_REBUILD_DIR", "/ix/tbruno/anp795/PDAC_Atlas/rebuild_v3")
 
 # A dataset needs enough cells before "zero detection" means anything. At
@@ -44,9 +46,9 @@ msg <- function(...) {
   flush.console()
 }
 
-subsets <- c(TNK = "subset_TNK.rds",
-             stromal = "subset_stromal.rds",
-             Bcell = "subset_Bcell.rds")
+subsets <- c(TNK = "subset_TNK.qs2",
+             stromal = "subset_stromal.qs2",
+             Bcell = "subset_Bcell.qs2")
 
 exclude <- list()
 report  <- character()
@@ -56,7 +58,7 @@ for (nm in names(subsets)) {
   f <- file.path(DIR, subsets[[nm]])
   msg("---- ", nm, " ----")
   msg("loading ", f)
-  s <- readRDS(f)
+  s <- read_obj(f)
 
   d  <- LayerData(s, layer = "data")
   ds <- factor(s$dataset_id)

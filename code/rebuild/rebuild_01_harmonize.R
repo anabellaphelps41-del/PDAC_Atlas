@@ -6,7 +6,7 @@
 #
 # Input : combined_9_datasets_hierarchical_annotation_seurat.rds  (the 52 GB original)
 #         ref/hgnc_complete_set.txt
-# Output: <DIR>/atlas_harmonized_counts_v3.rds   counts layer only, no data layer
+# Output: <DIR>/atlas_harmonized_counts_v3.qs2   counts layer only, no data layer
 #         <DIR>/feature_map_v3.tsv               every original feature -> final feature, rule, decision
 #         <DIR>/feature_codetect_v3.tsv          merges rejected because both rows were detected in one dataset
 #         <DIR>/PROVENANCE_01_harmonize.txt
@@ -37,11 +37,13 @@ suppressPackageStartupMessages({
   library(Matrix)
 })
 
+source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj() / save_obj()
+
 ROOT <- "/ix/tbruno/anp795/PDAC_Atlas"
 IN   <- Sys.getenv("PDAC_ATLAS_IN", file.path(ROOT, "combined_9_datasets_hierarchical_annotation_seurat.rds"))
 HGNC <- file.path(ROOT, "ref", "hgnc_complete_set.txt")
 DIR  <- Sys.getenv("PDAC_REBUILD_DIR", file.path(ROOT, "rebuild_v3"))
-OUT  <- file.path(DIR, "atlas_harmonized_counts_v3.rds")
+OUT  <- file.path(DIR, "atlas_harmonized_counts_v3.qs2")
 FMAP <- file.path(DIR, "feature_map_v3.tsv")
 FCOD <- file.path(DIR, "feature_codetect_v3.tsv")
 PROV <- file.path(DIR, "PROVENANCE_01_harmonize.txt")
@@ -223,8 +225,8 @@ rm(new_cts); gc(verbose = FALSE)
 d <- max(abs(new$nCount_RNA - md$nCount_RNA))
 msg("max |nCount_RNA change| vs source metadata: ", d)
 
-msg("writing ", OUT, " (compress=FALSE; the filesystem compresses ~2.5x)")
-saveRDS(new, OUT, compress = FALSE)
+msg("writing ", OUT, " (qs2)")
+save_obj(new, OUT)
 msg("wrote ", sprintf("%.2f GB", file.size(OUT) / 2^30))
 
 show <- function(x) capture.output(print(x))

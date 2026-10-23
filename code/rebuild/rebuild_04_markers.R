@@ -8,7 +8,7 @@
 #         <subset>    in {stromal, TNK, Bcell}   (default: stromal)
 #         [resolution] one of the swept values   (default: 0.6)
 #
-# Input : subset_<subset>_harmony.rds  (from rebuild_03_pipeline.R)
+# Input : subset_<subset>_harmony.qs2  (from rebuild_03_pipeline.R)
 # Output: step4_<subset>_res<r>_allmarkers.tsv     full FindAllMarkers table
 #         step4_<subset>_res<r>_top20.tsv          top 20 per cluster
 #         step4_<subset>_res<r>_decision.tsv  <<<  ONE ROW PER CLUSTER, the
@@ -40,8 +40,10 @@ SUBSET <- if (length(args) >= 1) args[1] else "stromal"
 RES    <- if (length(args) >= 2) as.numeric(args[2]) else 0.6
 stopifnot(SUBSET %in% c("stromal", "TNK", "Bcell"))
 
+source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj() / save_obj()
+
 DIR      <- Sys.getenv("PDAC_REBUILD_DIR", "/ix/tbruno/anp795/PDAC_Atlas/rebuild_v3")
-IN       <- file.path(DIR, sprintf("subset_%s_harmony.rds", SUBSET))
+IN       <- file.path(DIR, sprintf("subset_%s_harmony.qs2", SUBSET))
 tag      <- sprintf("%s_res%s", SUBSET, RES)
 F_ALL    <- file.path(DIR, sprintf("step4_%s_allmarkers.tsv", tag))
 F_TOP    <- file.path(DIR, sprintf("step4_%s_top20.tsv", tag))
@@ -105,7 +107,7 @@ programmes <- list(
 # ============================ 1. load ========================================
 ts("subset = ", SUBSET, " | resolution = ", RES)
 ts("loading ", IN)
-sub <- readRDS(IN)
+sub <- read_obj(IN)
 ts("loaded: ", format(nrow(sub), big.mark = ","), " genes x ",
    format(ncol(sub), big.mark = ","), " cells")
 
@@ -302,7 +304,7 @@ print(ggplot(comp_long, aes(cluster, frac, fill = dataset)) +
 dev.off()
 
 # ============================ 7. save + provenance ===========================
-saveRDS(sub, IN, compress = FALSE)   # re-save with module scores + cluster col
+save_obj(sub, IN)   # re-save with module scores + cluster col
 ts("re-wrote ", IN, " with programme scores attached")
 
 writeLines(c(

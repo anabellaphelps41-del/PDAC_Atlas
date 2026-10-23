@@ -41,6 +41,8 @@
 
 suppressPackageStartupMessages({ library(Seurat); library(SeuratObject) })
 
+source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj() / save_obj()
+
 DIR     <- Sys.getenv("PDAC_REBUILD_DIR", "/ix/tbruno/anp795/PDAC_Atlas/rebuild_v3")
 args    <- commandArgs(trailingOnly = TRUE)
 SUBSETS <- if (length(args)) args else c("TNK", "stromal", "Bcell")
@@ -69,12 +71,12 @@ looks_like_sample <- function(x) {
 
 first <- TRUE
 for (SUB in SUBSETS) {
-  f <- file.path(DIR, sprintf("subset_%s.rds", SUB))
+  f <- file.path(DIR, sprintf("subset_%s.qs2", SUB))
   if (!file.exists(f)) { msg("MISSING, skipping: ", f); next }
 
   msg("==== ", SUB, " ====")
   msg("loading ", f, "  (", sprintf("%.2f GB", file.size(f) / 1e9), " on disk)")
-  s  <- readRDS(f)
+  s  <- read_obj(f)
   md <- s@meta.data
   cn <- colnames(s)
   rm(s); gc(verbose = FALSE)

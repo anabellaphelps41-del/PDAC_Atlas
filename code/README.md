@@ -8,11 +8,11 @@ not: `.gitignore` tracks code and docs only.
 | Step | Script | Reads | Writes |
 |---|---|---|---|
 | 00m | `rebuild/rebuild_00m_manifest.R` | `inspect/atlas_metadata.csv.gz` | `sample_manifest.tsv` — one row per sample, `include_in_atlas` + `exclude_reason` |
-| 01 | `rebuild/rebuild_01_harmonize.R` | original 52 GB atlas, `ref/hgnc_complete_set.txt` | `atlas_harmonized_counts_v3.rds` (counts only), `feature_map_v3.tsv`, `feature_codetect_v3.tsv` |
+| 01 | `rebuild/rebuild_01_harmonize.R` | original 52 GB atlas, `ref/hgnc_complete_set.txt` | `atlas_harmonized_counts_v3.qs2` (counts only), `feature_map_v3.tsv`, `feature_codetect_v3.tsv` |
 | 01c | `rebuild/rebuild_01c_doublets.R` | v3 atlas, manifest | `doublets_scDblFinder_v3.tsv`, `doublets_by_sample_v3.tsv` |
-| 02 | `rebuild/rebuild_02_subset.R` | v3 atlas, manifest, doublets | `subset_{TNK,stromal,Bcell}.rds` |
+| 02 | `rebuild/rebuild_02_subset.R` | v3 atlas, manifest, doublets | `subset_{TNK,stromal,Bcell}.qs2` |
 | 02b | `rebuild/rebuild_02b_batchgenes.R` | subsets | `exclude_batchgenes.rds`, `batchgene_detection_*.tsv` |
-| 03 | `rebuild/rebuild_03_pipeline.R <subset>` | subset, batch genes | `subset_<subset>_harmony.rds`, QC pdf, cluster composition |
+| 03 | `rebuild/rebuild_03_pipeline.R <subset>` | subset, batch genes | `subset_<subset>_harmony.qs2`, QC pdf, cluster composition |
 | 04 | `rebuild/rebuild_04_markers.R <subset> [res]` | harmony object | markers, decision table (**re-saves its input**) |
 | 04b | `rebuild/rebuild_04b_singler.R <subset> [res]` | harmony object, `ref/celldex_*.rds` | SingleR lineage gate (**re-saves its input**) |
 | 00 | `rebuild/rebuild_00_provenance_audit.R` | subsets | metadata audit tables |
@@ -48,8 +48,12 @@ SingleR references are cached once on a node with internet:
   one dataset; rejected merges are listed in `feature_codetect_v3.tsv`.
 - **Doublets**: scDblFinder per `sample_key` on the whole atlas, before any
   compartment split.
-- **Storage**: objects are saved uncompressed for load speed; the `/ix`
-  filesystem compresses them ~2.5× on disk. Step 1 stores counts only.
+- **Storage**: `/ix` reads at ~27 MB/s, so file size is load time. Seurat
+  objects are saved as `qs2` (zstd, multithreaded) through `rebuild/io.R`:
+  ~6× smaller than uncompressed `.rds` and loaded in seconds rather than
+  minutes. `read_obj()` still reads a legacy `.rds` of the same name.
+  `save_obj()` writes to a temp file and renames, so a crash mid-write cannot
+  corrupt the existing copy. Step 1 stores counts only.
 
 ## Layout
 

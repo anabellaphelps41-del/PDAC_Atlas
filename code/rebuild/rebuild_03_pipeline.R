@@ -8,9 +8,9 @@
 # Usage:  Rscript rebuild_03_pipeline.R <subset>
 #         <subset> in {stromal, TNK, Bcell}   (default: stromal)
 #
-# Input : /ix/tbruno/anp795/PDAC_Atlas/rebuild/subset_<subset>.rds
-#         (built by rebuild_02_subset.R from atlas_harmonized_counts_v3.rds)
-# Output: subset_<subset>_harmony.rds
+# Input : <DIR>/subset_<subset>.qs2
+#         (built by rebuild_02_subset.R from atlas_harmonized_counts_v3.qs2)
+# Output: subset_<subset>_harmony.qs2
 #         step3_<subset>_qc.pdf
 #         step3_<subset>_clustercomp.tsv
 #         PROVENANCE_step3_<subset>.txt
@@ -47,9 +47,11 @@ args   <- commandArgs(trailingOnly = TRUE)
 SUBSET <- if (length(args) >= 1) args[1] else "stromal"
 stopifnot(SUBSET %in% c("stromal", "TNK", "Bcell"))
 
+source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj() / save_obj()
+
 DIR  <- Sys.getenv("PDAC_REBUILD_DIR", "/ix/tbruno/anp795/PDAC_Atlas/rebuild_v3")
-IN   <- file.path(DIR, sprintf("subset_%s.rds", SUBSET))
-OUT  <- file.path(DIR, sprintf("subset_%s_harmony.rds", SUBSET))
+IN   <- file.path(DIR, sprintf("subset_%s.qs2", SUBSET))
+OUT  <- file.path(DIR, sprintf("subset_%s_harmony.qs2", SUBSET))
 PDFF <- file.path(DIR, sprintf("step3_%s_qc.pdf", SUBSET))
 COMP <- file.path(DIR, sprintf("step3_%s_clustercomp.tsv", SUBSET))
 PROV <- file.path(DIR, sprintf("PROVENANCE_step3_%s.txt", SUBSET))
@@ -61,6 +63,7 @@ N_PCS               <- 50      # PCs computed
 N_DIMS              <- 30      # PCs handed to Harmony/neighbours/UMAP
 RESOLUTIONS         <- c(0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.6)
 SEED                <- 42
+NTHREADS            <- max(1L, as.integer(Sys.getenv("SLURM_CPUS_PER_TASK", "4")))  # Harmony BLAS threads
 K_MIX               <- 30      # k for the batch-mixing diagnostic
 
 set.seed(SEED)
@@ -71,7 +74,7 @@ ts("params: N_HVG=", N_HVG, " pool=", N_HVG_POOL, " nPCs=", N_PCS,
 
 # ============================ 1. load + drop tiny batches ====================
 ts("loading ", IN)
-sub <- readRDS(IN)
+sub <- read_obj(IN)
 ts("loaded: ", format(nrow(sub), big.mark = ","), " genes x ",
    format(ncol(sub), big.mark = ","), " cells")
 
@@ -195,6 +198,7 @@ sub <- harmony::RunHarmony(sub,
                            reduction.use = "pca",
                            dims.use      = 1:N_PCS,
                            reduction.save = "harmony",
+                           ncores        = NTHREADS,
                            plot_convergence = FALSE,
                            verbose = TRUE)
 ts("harmony embedding: ", paste(dim(Embeddings(sub, "harmony")), collapse = " x "))
@@ -329,8 +333,8 @@ print(VlnPlot(sub, features = intersect(c("nFeature_RNA", "nCount_RNA", "percent
 dev.off()
 
 # ============================ 9. save + provenance ===========================
-ts("writing ", OUT, " (compress = FALSE)")
-saveRDS(sub, OUT, compress = FALSE)
+ts("writing ", OUT, " (qs2)")
+save_obj(sub, OUT)
 ts("wrote ", sprintf("%.2f GB", file.size(OUT) / 1e9))
 
 prov <- c(

@@ -2,7 +2,7 @@
 # =============================================================================
 # rebuild_01c_doublets.R   --   scDblFinder per sample on the whole atlas
 #
-# Input : <DIR>/atlas_harmonized_counts_v3.rds
+# Input : <DIR>/atlas_harmonized_counts_v3.qs2
 #         <DIR>/sample_manifest.tsv
 # Output: <DIR>/doublets_scDblFinder_v3.tsv     one row per cell
 #         <DIR>/doublets_by_sample_v3.tsv
@@ -30,9 +30,11 @@ suppressPackageStartupMessages({
   library(data.table)
 })
 
+source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj() / save_obj()
+
 ROOT <- "/ix/tbruno/anp795/PDAC_Atlas"
 DIR  <- Sys.getenv("PDAC_REBUILD_DIR", file.path(ROOT, "rebuild_v3"))
-IN   <- file.path(DIR, "atlas_harmonized_counts_v3.rds")
+IN   <- file.path(DIR, "atlas_harmonized_counts_v3.qs2")
 MAN  <- file.path(DIR, "sample_manifest.tsv")
 OUT  <- file.path(DIR, "doublets_scDblFinder_v3.tsv")
 OUTS <- file.path(DIR, "doublets_by_sample_v3.tsv")
@@ -48,7 +50,7 @@ options(width = 200)
 msg <- function(...) { cat(sprintf("[%s] ", format(Sys.time(), "%H:%M:%S")), ..., "\n", sep = ""); flush.console() }
 
 msg("loading ", IN)
-obj <- readRDS(IN)
+obj <- read_obj(IN)
 md  <- obj@meta.data
 cts <- LayerData(obj, assay = "RNA", layer = "counts")
 rm(obj); gc(verbose = FALSE)
