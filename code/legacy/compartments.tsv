@@ -1,0 +1,7 @@
+# Edit this file AFTER running 01_inspect_atlas.R.
+# TAB-separated. Labels within a compartment are separated by semicolons.
+# Labels must match the annotation levels EXACTLY (case, spaces, punctuation).
+# Delete these example rows and replace with your real values.
+compartment	annot_col	labels
+tnk	REPLACE_WITH_ANNOT_COLUMN	T cell;NK cell
+caf	REPLACE_WITH_ANNOT_COLUMN	Fibroblast;CAF

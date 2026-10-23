@@ -1,0 +1,10 @@
+# Track code and docs only. Data, objects, logs and figures stay out of git.
+/*
+!/.gitignore
+!/README.md
+!/code/
+
+*.rds
+*.pdf
+*.Rhistory
+.Rproj.user/
