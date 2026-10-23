@@ -59,8 +59,8 @@ SUBSET <- if (length(args) >= 1) args[1] else "stromal"
 RES    <- if (length(args) >= 2) as.numeric(args[2]) else 0.6
 stopifnot(SUBSET %in% c("stromal", "TNK", "Bcell"))
 
-DIR     <- "/ix/tbruno/anp795/PDAC_Atlas/rebuild"
-REF_DIR <- file.path(DIR, "ref")
+DIR     <- Sys.getenv("PDAC_REBUILD_DIR", "/ix/tbruno/anp795/PDAC_Atlas/rebuild_v3")
+REF_DIR <- "/ix/tbruno/anp795/PDAC_Atlas/ref"   # shared, not per rebuild
 IN      <- file.path(DIR, sprintf("subset_%s_harmony.rds", SUBSET))
 tag     <- sprintf("%s_res%s", SUBSET, RES)
 F_CELL  <- file.path(DIR, sprintf("step4b_%s_singler_percell.tsv", tag))
@@ -101,13 +101,23 @@ lineage <- list(
 
 # ===================== reference label -> our vocabulary ======================
 # Applied to label.main from either reference. Order matters: first match wins.
+#
+# HPCA has no CAF profile. Tumour fibroblasts land on its other mesenchymal
+# references -- Tissue_stem_cells (bone-marrow MSC-like stromal cells),
+# Chondrocytes, Osteoblasts -- and Blueprint's Mesangial cells are the same
+# lineage. The first version mapped those to 'stemlike'/'chondro', so 0 of 20
+# stromal clusters could pass a gate that asks for 'fibroblast', and the two
+# references "agreed" on only 22.8% of cells while Blueprint called 17/20
+# clusters fibroblast. They are a lineage call here: fibroblast/mesenchymal.
+# The original reference label is kept in singler_<ref>_raw for review.
 map_label <- function(x) {
   x0 <- tolower(x)
   out <- rep(NA_character_, length(x0))
   rule <- list(
-    fibroblast  = "fibroblast|msc|mesenchymal stem",
-    mural       = "smooth_muscle|smooth muscle|pericyte|myocyte",
+    fibroblast  = "fibroblast|^msc$|mesenchymal stem|tissue_stem|chondrocyte|osteoblast|mesangial",
+    mural       = "smooth_muscle|smooth muscle|pericyte",
     endothelial = "endothelial",
+    neural      = "neuron|neuroepithelial|astrocyte|schwann|glia|oligodendro",
     epithelial  = "epithelial|keratinocyte|hepatocyte",
     myeloid     = "macrophage|monocyte|dc$|^dc|dendritic|neutrophil|myeloid|eosinophil|basophil|mast",
     Tcell       = "t_cell|t-cell|t cells|cd4\\+|cd8\\+|tregs",
@@ -115,9 +125,8 @@ map_label <- function(x) {
     Bcell       = "b_cell|b-cell|b cells|pre-b|pro-b",
     plasma      = "plasma",
     RBC         = "erythro",
-    neural      = "neuron|astrocyte|schwann|glia|oligodendro",
-    chondro     = "chondrocyte|osteoblast|adipocyte",
-    stemlike    = "tissue_stem|ips|embryonic"
+    adipocyte   = "adipocyte",
+    stemlike    = "^ips|embryonic"
   )
   for (nm in names(rule)) {
     hit <- is.na(out) & grepl(rule[[nm]], x0)
