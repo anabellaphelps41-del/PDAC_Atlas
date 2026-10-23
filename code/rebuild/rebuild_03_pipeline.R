@@ -9,7 +9,7 @@
 #         <subset> in {stromal, TNK, Bcell}   (default: stromal)
 #
 # Input : /ix/tbruno/anp795/PDAC_Atlas/rebuild/subset_<subset>.rds
-#         (built by rebuild_02_subset.R from atlas_harmonized_counts_v2.rds)
+#         (built by rebuild_02_subset.R from atlas_harmonized_counts_v3.rds)
 # Output: subset_<subset>_harmony.rds
 #         step3_<subset>_qc.pdf
 #         step3_<subset>_clustercomp.tsv
@@ -47,7 +47,7 @@ args   <- commandArgs(trailingOnly = TRUE)
 SUBSET <- if (length(args) >= 1) args[1] else "stromal"
 stopifnot(SUBSET %in% c("stromal", "TNK", "Bcell"))
 
-DIR  <- "/ix/tbruno/anp795/PDAC_Atlas/rebuild"
+DIR  <- Sys.getenv("PDAC_REBUILD_DIR", "/ix/tbruno/anp795/PDAC_Atlas/rebuild_v3")
 IN   <- file.path(DIR, sprintf("subset_%s.rds", SUBSET))
 OUT  <- file.path(DIR, sprintf("subset_%s_harmony.rds", SUBSET))
 PDFF <- file.path(DIR, sprintf("step3_%s_qc.pdf", SUBSET))
@@ -368,19 +368,20 @@ prov <- c(
           K_MIX, mix_pca, mix_harm, mix_ideal),
   sprintf("  resolutions swept: %s", paste(RESOLUTIONS, collapse = ", ")),
   "",
-  "KNOWN CONSTRAINTS INHERITED (see handoff v2 sections 6.3 and 6.6)",
-  "  - GSE211644 is a sorted, CD8-biased T cell dataset. No compositional or",
-  "    abundance claim may rest on it. CD4:CD8 ratios out of this object are",
-  "    a sorting artefact, not PDAC biology.",
+  "UPSTREAM EXCLUSIONS (rebuild_02_subset.R, PROVENANCE_02_subset.txt)",
+  "  - manifest: peripheral blood, liver/other metastases, non-PDAC tumours, and",
+  "    all of GSE211644 (sorted, CD8-biased) are not in this object.",
+  "  - scDblFinder doublets (per sample, whole atlas) removed.",
+  "  - 'Mixed/possible doublet' (celltype_level2) excluded by construction.",
+  "",
+  "KNOWN CONSTRAINTS",
   "  - CRA001160 and GSE155698 share an older reference build with the IG_C and",
   "    TR_C biotypes filtered out. Consequences: no gamma-delta calls in those",
-  "    two datasets (49,407 cells, 26% of T/NK); no cross-dataset isotype work",
-  "    (7,361 cells, 41% of the B subset); CD24 unusable atlas-wide.",
-  "  - percent.mt is usable in 5 of 6 datasets. GSE154778 is broken (45% zeros,",
-  "    median 1.32%). Never apply a uniform percent.mt filter -- doing so",
+  "    two datasets; no cross-dataset isotype work; CD24 unusable atlas-wide.",
+  "  - GSE154778 has 45% percent.mt == 0 atlas-wide, but 0-5% inside these",
+  "    compartments. Never apply a uniform percent.mt filter -- doing so",
   "    manufactures a batch effect out of a QC step.",
-  "  - 'Mixed/possible doublet' (30,140 cells) is excluded by construction and",
-  "    remains undecided. scDblFinder per dataset_id is the outstanding fix.",
+  "  - Ambient RNA was removed by the authors for GSE205013 and GSE212966 only.",
   ""
 )
 writeLines(prov, PROV)

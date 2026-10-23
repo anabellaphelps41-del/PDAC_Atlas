@@ -1,30 +1,43 @@
 #!/usr/bin/env Rscript
-# rebuild_02_subset.R
+# rebuild_02_subset.R   (v3)
 # Step 2 of the PDAC atlas rebuild: split the harmonized object into the three
 # compartments that get their own pipeline (T/NK, stromal/CAF, B/plasma).
 #
-# Input : /ix/tbruno/anp795/PDAC_Atlas/rebuild/atlas_harmonized_counts_v2.rds
-# Output: subset_TNK.rds, subset_stromal.rds, subset_Bcell.rds  (+ PROVENANCE.txt)
+# Input : <DIR>/atlas_harmonized_counts_v3.rds   (rebuild_01_harmonize.R)
+#         <DIR>/sample_manifest.tsv               (rebuild_00m_manifest.R)
+#         <DIR>/doublets_scDblFinder_v3.tsv       (rebuild_01c_doublets.R)
+# Output: subset_TNK.rds, subset_stromal.rds, subset_Bcell.rds  (+ PROVENANCE_02_subset.txt)
 #
 # Notes:
 #   - Subsetting uses celltype_level2, NOT level1. level1/level2 disagree on
 #     doublet status for 31,521 cells; level2 is the deliberate choice.
 #   - "Mixed/possible doublet" (30,140) is its own level2 value and is therefore
 #     excluded from all three subsets by construction, not by a filter.
-#   - The data layer is NOT recomputed. LogNormalize(scale.factor=1e4) is a
-#     per-cell operation, so values are identical whether computed on the full
-#     atlas or within a subset. Re-running it would be a no-op.
+#   - Cells are removed, in this order of attribution, when:
+#       manifest      include_in_atlas == FALSE (blood, metastasis, non-PDAC,
+#                     GSE211644 - the reason is carried per cell)
+#       doublet       scDblFinder_class == "doublet"
+#       neutrophil    celltype_level3 == "Neutrophil-like"
+#   - Step 1 writes counts only. Each subset is normalized here
+#     (LogNormalize, scale.factor 1e4). That is a per-cell operation, so the
+#     values are identical to normalizing the whole atlas.
 #   - percent.mt IS recomputed here, purely as a diagnostic, to establish which
 #     datasets structurally lack MT genes.
 
 suppressPackageStartupMessages({
   library(Seurat)
   library(Matrix)
+  library(data.table)
 })
 
-IN  <- "/ix/tbruno/anp795/PDAC_Atlas/rebuild/atlas_harmonized_counts_v2.rds"
-OUT <- "/ix/tbruno/anp795/PDAC_Atlas/rebuild"
+ROOT <- "/ix/tbruno/anp795/PDAC_Atlas"
+DIR  <- Sys.getenv("PDAC_REBUILD_DIR", file.path(ROOT, "rebuild_v3"))
+IN   <- file.path(DIR, "atlas_harmonized_counts_v3.rds")
+MAN  <- file.path(DIR, "sample_manifest.tsv")
+DBL  <- file.path(DIR, "doublets_scDblFinder_v3.tsv")
+OUT  <- DIR
 
+options(width = 200)
 msg <- function(...) {
   cat(sprintf("[%s] ", format(Sys.time(), "%H:%M:%S")), ..., "\n", sep = "")
   flush.console()
@@ -39,17 +52,30 @@ msg("loaded: ", format(nrow(obj), big.mark = ","), " genes x ",
     format(ncol(obj), big.mark = ","), " cells")
 
 md <- obj@meta.data
-
-# Metadata was pruned 212 -> 21 columns in step 1. Fail loudly if the columns
-# this script depends on did not survive, rather than silently doing the wrong
-# thing (e.g. keeping Neutrophil-like cells because the column is gone).
-need <- c("celltype_level2", "celltype_level3", "dataset_id", "nCount_RNA")
+need <- c("celltype_level2", "celltype_level3", "dataset_id", "sample_id", "nCount_RNA")
 missing <- setdiff(need, colnames(md))
 if (length(missing)) {
-  stop("required metadata column(s) absent after step-1 pruning: ",
-       paste(missing, collapse = ", "),
-       "\nStop and recover them before subsetting.")
+  stop("required metadata column(s) absent: ", paste(missing, collapse = ", "))
 }
+
+# --------------------------------------------------------------------------
+# Attach manifest + doublet calls
+# --------------------------------------------------------------------------
+man <- fread(MAN)
+md$sample_key <- paste(md$dataset_id, md$sample_id, sep = ":")
+mi <- match(md$sample_key, man$sample_key)
+if (anyNA(mi)) stop("cells whose sample is not in the manifest: ", sum(is.na(mi)))
+for (cc in c("patient_key", "patient_id_source", "tissue_class", "primary_or_metastatic",
+             "patient_diagnosis", "treatment_status", "include_in_atlas", "exclude_reason")) {
+  md[[cc]] <- man[[cc]][mi]
+}
+
+dbl <- fread(DBL)
+di  <- match(rownames(md), dbl$cell)
+if (anyNA(di)) stop("cells missing from the doublet table: ", sum(is.na(di)))
+md$scDblFinder_score <- dbl$scDblFinder_score[di]
+md$scDblFinder_class <- dbl$scDblFinder_class[di]
+obj@meta.data <- md
 
 msg("celltype_level2 tally:")
 print(sort(table(md$celltype_level2), decreasing = TRUE))
@@ -73,30 +99,27 @@ if (length(mt_genes) > 0) {
   }))
   msg("recomputed percent.mt, per dataset:")
   print(mt_report)
-  msg("READ THIS: any dataset at ~100% zeros has no MT genes in its source ",
-      "matrix. percent.mt cannot be rescued for those datasets by recomputation ",
-      "- it is permanently unusable there, and that gets written down, not fixed.")
 } else {
   obj$percent.mt.recomputed <- NA_real_
   msg("no MT- genes at all. percent.mt is dead atlas-wide. Record and move on.")
 }
 
 # --------------------------------------------------------------------------
-# Global exclusion: Neutrophil-like (single-dataset artifact, 85.6% GSE155698)
+# Exclusions. Each removed cell is attributed to the first reason that applies.
 # %in% rather than != so that NA labels are retained, not silently dropped.
 # --------------------------------------------------------------------------
-neut <- md$celltype_level3 %in% "Neutrophil-like"
-msg("Neutrophil-like cells flagged for exclusion: ", format(sum(neut), big.mark = ","))
-if (sum(neut) > 0) {
-  msg("their celltype_level2 distribution (expect these to sit under Myeloid):")
-  print(table(md$celltype_level2[neut]))
-}
-keep_global <- !neut
+why <- rep("", nrow(md))
+why[!md$include_in_atlas]                                   <- paste0("manifest: ", md$exclude_reason[!md$include_in_atlas])
+why[!nzchar(why) & md$scDblFinder_class %in% "doublet"]     <- "scDblFinder doublet"
+why[!nzchar(why) & md$celltype_level3 %in% "Neutrophil-like"] <- "Neutrophil-like (GSE155698 artifact)"
+keep_global <- !nzchar(why)
+msg("cells kept atlas-wide: ", format(sum(keep_global), big.mark = ","), " of ",
+    format(nrow(md), big.mark = ","))
 
 # --------------------------------------------------------------------------
-# Subset definitions and expected counts (from the step-1 compartment tally,
-# before Neutrophil-like removal). A shortfall means Neutrophil-like cells were
-# living inside that compartment - which is itself a finding worth chasing.
+# Subset definitions. Expected counts are the step-1 compartment tallies
+# (unchanged since v2: same cells, same labels). A mismatch means the input
+# object is not what this script thinks it is.
 # --------------------------------------------------------------------------
 defs <- list(
   TNK     = list(level2 = c("T/NK ambiguous", "T/NK"), expected = 193408L),
@@ -104,7 +127,8 @@ defs <- list(
   Bcell   = list(level2 = "B/plasma",                  expected =  17975L)
 )
 
-written <- list()
+written  <- list()
+excluded <- list()
 
 for (nm in names(defs)) {
   d      <- defs[[nm]]
@@ -114,24 +138,28 @@ for (nm in names(defs)) {
   msg("---- ", nm, " ----")
   msg("compartment total: ", format(sum(in_cmp), big.mark = ","),
       " | expected: ",       format(d$expected,  big.mark = ","),
-      " | after Neutrophil-like exclusion: ", format(length(cells), big.mark = ","))
-
+      " | after exclusions: ", format(length(cells), big.mark = ","))
   if (sum(in_cmp) != d$expected) {
-    msg("*** compartment total does not match the expected count. Do not ",
-        "proceed past this until you know why. ***")
+    if (!nzchar(Sys.getenv("PDAC_ALLOW_COUNT_MISMATCH")))
+      stop("compartment total does not match the expected count for ", nm)
+    msg("*** count mismatch tolerated (PDAC_ALLOW_COUNT_MISMATCH set; test runs only) ***")
   }
   if (length(cells) == 0) stop("empty subset for ", nm, " - check level2 spelling")
 
+  ex <- as.data.frame(table(reason = why[in_cmp & !keep_global]), stringsAsFactors = FALSE)
+  ex <- ex[order(-ex$Freq), ]
+  msg("excluded from ", nm, ":")
+  print(ex, row.names = FALSE)
+  excluded[[nm]] <- cbind(subset = nm, ex)
+
   s <- subset(obj, cells = cells)
   DefaultAssay(s) <- "RNA"
+  s <- NormalizeData(s, normalization.method = "LogNormalize", scale.factor = 1e4, verbose = FALSE)
 
   msg("cells per dataset_id:")
   print(table(s$dataset_id))
-  msg("NOTE: any dataset contributing <100 cells here is a poor Harmony batch ",
-      "in step 3. Decide whether to merge or drop it before running Harmony.")
-
-  msg("celltype_level3 composition:")
-  print(sort(table(s$celltype_level3), decreasing = TRUE))
+  msg("cells per tissue_class:")
+  print(table(s$tissue_class))
 
   f <- file.path(OUT, paste0("subset_", nm, ".rds"))
   msg("writing ", f, " (compress=FALSE)")
@@ -141,7 +169,8 @@ for (nm in names(defs)) {
   written[[nm]] <- data.frame(
     subset    = nm,
     criterion = paste0('celltype_level2 %in% c("', paste(d$level2, collapse = '", "'), '")'),
-    cells     = length(cells),
+    compartment = sum(in_cmp),
+    kept      = length(cells),
     genes     = nrow(s),
     file      = basename(f),
     stringsAsFactors = FALSE
@@ -151,49 +180,42 @@ for (nm in names(defs)) {
 }
 
 # --------------------------------------------------------------------------
-# Provenance file - answers "which annotation did this subset come from?"
+# Provenance file - answers "which cells, and why not the others?"
 # --------------------------------------------------------------------------
-prov <- file.path(OUT, "PROVENANCE.txt")
+prov <- file.path(OUT, "PROVENANCE_02_subset.txt")
 tbl  <- do.call(rbind, written)
+ext  <- do.call(rbind, excluded)
+show <- function(x) capture.output(print(x, row.names = FALSE))
 
 writeLines(c(
-  "PDAC Atlas rebuild - compartment subsets",
+  "PDAC Atlas rebuild - compartment subsets (v3)",
   paste("generated:", format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
   paste("by:", "rebuild_02_subset.R"),
   paste("source:", IN),
+  paste("manifest:", MAN),
+  paste("doublets:", DBL),
   "",
   "ANNOTATION COLUMN USED FOR SUBSETTING: celltype_level2",
+  "  (level1/level2 disagree on doublet status for 31,521 cells; level2 is the",
+  "  deliberate choice.) 'Mixed/possible doublet' (30,140) is excluded by construction.",
   "",
-  "Why level2 and not level1: level1 and level2 disagree on doublet status for",
-  "31,521 cells (level1 calls 15,576 doublets, level2 calls 47,097; the extra",
-  "came out of Immune 23,381 and Stromal/vascular 8,140). level2 is the",
-  "deliberate choice.",
+  "EXCLUSIONS (first applicable reason per cell)",
+  "  manifest     include_in_atlas == FALSE: blood, metastasis, non-PDAC tumour, GSE211644",
+  "  doublet      scDblFinder_class == 'doublet' (per-sample, whole atlas)",
+  "  neutrophil   celltype_level3 == 'Neutrophil-like' (85.6% GSE155698; single-dataset artifact)",
   "",
-  "The object carries four competing annotation schemes:",
-  "  celltype_level1/2/3, celltype_level3_auto   (hierarchical pass - THIS ONE)",
-  "  celltype_broad_reviewed, celltype_fine_reviewed  (earlier reviewed pass)",
-  "  celltype_broad, celltype_fine                    (earlier auto pass)",
-  "  Level.1-3.Annotation, broad_celltypes, celltypes, new_celltypes (inherited)",
-  "Only compartment-level calls (level1/level2) survived review. celltype_level3,",
-  "celltype_fine, the 49 clusters and the UMAP did NOT and are not used here.",
+  show(ext),
   "",
-  "GLOBAL EXCLUSION: celltype_level3 == 'Neutrophil-like'",
-  "  Single-dataset artifact: 85.6% from GSE155698 alone (22.5% of that whole",
-  "  dataset), absent from five of nine datasets. Cannot be used cross-dataset;",
-  "  ambient-driven expression would manufacture false ligand-receptor hits.",
-  "",
-  "NOT INCLUDED IN ANY SUBSET: 'Mixed/possible doublet' (30,140 cells).",
-  "  These are their own celltype_level2 value, so they are excluded by",
-  "  construction. Their doublet status is UNRESOLVED - see open items.",
-  "",
-  "Normalization: the data layer is carried over from step 1 unchanged.",
-  "  LogNormalize(scale.factor=1e4) is per-cell, so subsetting does not",
-  "  invalidate it. Do not re-normalize.",
+  "Normalization: LogNormalize(scale.factor=1e4) per subset; counts unchanged from step 1.",
   "",
   "Subsets written:",
-  paste(capture.output(print(tbl, row.names = FALSE)), collapse = "\n"),
+  show(tbl),
   "",
-  "Everything saved with compress=FALSE (larger on disk, loads in minutes)."
+  "New metadata columns: sample_key, patient_key, patient_id_source, tissue_class,",
+  "  primary_or_metastatic, patient_diagnosis, treatment_status, scDblFinder_score/class,",
+  "  percent.mt.recomputed.",
+  "",
+  "Everything saved with compress=FALSE (loads in minutes; the filesystem compresses ~2.5x)."
 ), prov)
 
 msg("wrote ", prov)

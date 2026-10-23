@@ -17,8 +17,8 @@
 # Expect a few minutes on first run.
 # =============================================================================
 
-DIR     <- "/ix/tbruno/anp795/PDAC_Atlas/rebuild"
-REF_DIR <- file.path(DIR, "ref")
+DIR     <- "/ix/tbruno/anp795/PDAC_Atlas"
+REF_DIR <- "/ix/tbruno/anp795/PDAC_Atlas/ref"   # shared, not per rebuild
 dir.create(REF_DIR, showWarnings = FALSE, recursive = TRUE)
 
 msg <- function(...) cat(sprintf("[%s] ", format(Sys.time(), "%H:%M:%S")), ..., "\n", sep = "")

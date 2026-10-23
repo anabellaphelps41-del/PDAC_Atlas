@@ -41,7 +41,7 @@
 
 suppressPackageStartupMessages({ library(Seurat); library(SeuratObject) })
 
-DIR     <- "/ix/tbruno/anp795/PDAC_Atlas/rebuild"
+DIR     <- Sys.getenv("PDAC_REBUILD_DIR", "/ix/tbruno/anp795/PDAC_Atlas/rebuild_v3")
 args    <- commandArgs(trailingOnly = TRUE)
 SUBSETS <- if (length(args)) args else c("TNK", "stromal", "Bcell")
 

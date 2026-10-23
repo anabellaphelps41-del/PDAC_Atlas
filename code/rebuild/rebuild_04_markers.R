@@ -40,7 +40,7 @@ SUBSET <- if (length(args) >= 1) args[1] else "stromal"
 RES    <- if (length(args) >= 2) as.numeric(args[2]) else 0.6
 stopifnot(SUBSET %in% c("stromal", "TNK", "Bcell"))
 
-DIR      <- "/ix/tbruno/anp795/PDAC_Atlas/rebuild"
+DIR      <- Sys.getenv("PDAC_REBUILD_DIR", "/ix/tbruno/anp795/PDAC_Atlas/rebuild_v3")
 IN       <- file.path(DIR, sprintf("subset_%s_harmony.rds", SUBSET))
 tag      <- sprintf("%s_res%s", SUBSET, RES)
 F_ALL    <- file.path(DIR, sprintf("step4_%s_allmarkers.tsv", tag))

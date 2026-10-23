@@ -26,7 +26,7 @@ suppressPackageStartupMessages({
   library(Matrix)
 })
 
-DIR <- "/ix/tbruno/anp795/PDAC_Atlas/rebuild"
+DIR <- Sys.getenv("PDAC_REBUILD_DIR", "/ix/tbruno/anp795/PDAC_Atlas/rebuild_v3")
 
 # A dataset needs enough cells before "zero detection" means anything. At
 # n cells and true detection rate p, P(observing zero) = (1-p)^n. At n=150 and
