@@ -9,7 +9,8 @@
 #         [resolution] one of the swept values   (default: 0.6)
 #
 # Input : subset_<subset>_harmony.qs2  (from rebuild_03_pipeline.R)
-# Output: step4_<subset>_res<r>_allmarkers.tsv     full FindAllMarkers table
+# Output: step4_<subset>_res<r>_allmarkers.tsv     full FindAllMarkers table,
+#                                                  + batch_class from rebuild_02b
 #         step4_<subset>_res<r>_top20.tsv          top 20 per cluster
 #         step4_<subset>_res<r>_decision.tsv  <<<  ONE ROW PER CLUSTER, the
 #                                                  table you actually annotate from
@@ -50,6 +51,7 @@ F_TOP    <- file.path(DIR, sprintf("step4_%s_top20.tsv", tag))
 F_DEC    <- file.path(DIR, sprintf("step4_%s_decision.tsv", tag))
 F_PDF    <- file.path(DIR, sprintf("step4_%s_qc.pdf", tag))
 F_PROV   <- file.path(DIR, sprintf("PROVENANCE_step4_%s.txt", tag))
+F_BATCH  <- file.path(DIR, sprintf("batchgene_detection_%s.tsv", SUBSET))   # rebuild_02b
 
 MAX_CELLS_PER_IDENT <- 5000   # FindAllMarkers subsample; see provenance note
 MIN_PCT             <- 0.25
@@ -130,6 +132,32 @@ mk <- FindAllMarkers(sub, only.pos = TRUE, min.pct = MIN_PCT,
                      max.cells.per.ident = MAX_CELLS_PER_IDENT,
                      random.seed = SEED, verbose = FALSE)
 mk <- mk[order(mk$cluster, -mk$avg_log2FC), ]
+
+# Batch genes from rebuild_02b. The HVG mask kept them out of the embedding,
+# but FindAllMarkers tests every gene, so TRAC/TRBC/IGKC-type genes can still
+# rank as top markers. Flag them rather than drop them: GRADED genes include
+# real markers (MKI67 in a cycling cluster).
+#   STRUCTURAL - absent from at least one dataset's reference: not a usable marker
+#   GRADED     - >=10x detection spread across datasets: check per dataset first
+if (file.exists(F_BATCH)) {
+  bg <- read.delim(F_BATCH, stringsAsFactors = FALSE, check.names = FALSE)
+  batch_class <- setNames(bg$class, bg$gene)
+  rm(bg)
+} else {
+  ts("NOTE: ", F_BATCH, " not found; batch_class left empty")
+  batch_class <- character(0)
+}
+mk$batch_class <- unname(batch_class[mk$gene])
+mk$batch_class[is.na(mk$batch_class)] <- ""
+BATCH_TAG <- c(STRUCTURAL = "(S)", GRADED = "(G)")
+tagged <- function(d) {   # gene names with (S)/(G) appended, for the summaries
+  t <- BATCH_TAG[d$batch_class]
+  paste0(d$gene, ifelse(is.na(t), "", t))
+}
+ts("markers flagged by batch_class: ",
+   sum(mk$batch_class == "STRUCTURAL"), " STRUCTURAL, ",
+   sum(mk$batch_class == "GRADED"), " GRADED (of ", nrow(mk), " rows)")
+
 write.table(mk, F_ALL, sep = "\t", quote = FALSE, row.names = FALSE)
 ts("wrote ", F_ALL, " (", nrow(mk), " rows)")
 
@@ -139,11 +167,12 @@ ts("wrote ", F_TOP)
 
 ts("top 12 markers per cluster:")
 for (cl in levels(Idents(sub))) {
-  g <- head(mk$gene[mk$cluster == cl], 12)
+  g <- head(tagged(mk[mk$cluster == cl, ]), 12)
   cat(sprintf("  cluster %-3s n=%-7s %s\n", cl,
               format(sum(Idents(sub) == cl), big.mark = ","),
               paste(g, collapse = ", ")))
 }
+cat("  (S) structural batch gene - not a usable marker; (G) graded - check per dataset\n")
 
 # ============================ 3. lineage purity ==============================
 ts("computing per-cluster lineage detection rates")
@@ -203,7 +232,7 @@ dec <- data.frame(
   round(lin, 1),
   round(score_by_cl, 3),
   top_markers      = vapply(names(idx), function(cl)
-                       paste(head(mk$gene[mk$cluster == cl], 8), collapse = ";"),
+                       paste(head(tagged(mk[mk$cluster == cl, ]), 8), collapse = ";"),
                        character(1)),
   check.names = FALSE, row.names = NULL
 )
@@ -321,6 +350,15 @@ writeLines(c(
   "    sizes, but it means p-values are not comparable across clusters of very",
   "    different size. Rank by avg_log2FC and pct.1-pct.2, not by p_val_adj.",
   sprintf("  seed=%d", SEED),
+  "",
+  "BATCH GENES",
+  sprintf("  batch_class (allmarkers, top20) comes from %s.", basename(F_BATCH)),
+  "  In the decision table and log, top markers carry (S) or (G):",
+  "    (S) STRUCTURAL - absent from at least one dataset's reference; not a",
+  "        usable marker.",
+  "    (G) GRADED - >=10x detection spread across datasets; check per dataset",
+  "        before relying on it (cell-cycle genes are GRADED and still real).",
+  "  GRADED_PROTECTED genes were kept in the HVG pool and are not tagged.",
   "",
   "FLAG THRESHOLDS (prompts to inspect, not verdicts)",
   sprintf("  dataset purity > %.0f%%", 100 * PURITY_FLAG),

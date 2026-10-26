@@ -48,6 +48,14 @@ SingleR references are cached once on a node with internet:
   one dataset; rejected merges are listed in `feature_codetect_v3.tsv`.
 - **Doublets**: scDblFinder per `sample_key` on the whole atlas, before any
   compartment split.
+- **Batch genes**: 02b masks STRUCTURAL (absent from a dataset's reference)
+  and GRADED (≥10× detection spread) genes from HVG selection. A per-subset
+  `PROTECT` list in `rebuild_02b_batchgenes.R` keeps lineage markers that are
+  graded only because of the small GSE154778 cohort (stromal mural markers
+  such as DES/MUSTN1; T/NK CD40LG, PTGDR, IL18RAP, ADGRG1, MYBL1). Cell-cycle
+  genes stay masked on purpose. Step 04 tags batch genes in its marker tables
+  (`batch_class`, and `(S)`/`(G)` in the decision table) instead of dropping
+  them.
 - **Storage**: `/ix` reads at ~27 MB/s, so file size is load time. Seurat
   objects are saved as `qs2` (zstd, multithreaded) through `rebuild/io.R`:
   ~6× smaller than uncompressed `.rds` and loaded in seconds rather than

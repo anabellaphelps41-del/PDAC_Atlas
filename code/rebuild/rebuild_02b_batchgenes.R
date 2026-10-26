@@ -41,6 +41,22 @@ PRESENT_CUT <- 0.05   # "detected" in the high dataset
 GRADED_CUT  <- 10     # max/min detection ratio for the graded class
 GRADED_MIN  <- 0.10   # graded class must reach this in at least one dataset
 
+# Lineage markers the GRADED rule may not mask in their own compartment. Each
+# is graded only because GSE154778 barely detects it (177 TNK / 1,974 stromal
+# cells; in TNK 0.6% is one cell). With GSE154778 left out every spread is
+# under 10x. RGS5 and ACTA2 are not graded in stromal today; they are listed so
+# a rerun cannot mask them. STRUCTURAL calls are never overridden.
+# Not protected on purpose: cell-cycle genes (MKI67, UBE2C, TYMS, PCLAF) stay
+# out of the HVGs so proliferation does not drive the embedding; Step 4 scores
+# them instead. RGS5/ACTA2/NKG7 graded in TNK or Bcell are contamination and
+# stay masked there.
+PROTECT <- list(
+  TNK     = c("CD40LG", "PTGDR", "IL18RAP", "ADGRG1", "MYBL1"),
+  stromal = c("DES", "MUSTN1", "MYOCD", "LDB3", "RERGL", "ATP1A2", "CASQ2",
+              "MYOM1", "RGS5", "ACTA2"),
+  Bcell   = character(0)
+)
+
 msg <- function(...) {
   cat(sprintf("[%s] ", format(Sys.time(), "%H:%M:%S")), ..., "\n", sep = "")
   flush.console()
@@ -100,12 +116,16 @@ for (nm in names(subsets)) {
 
   structural <- rownames(det)[mx >= PRESENT_CUT & mn == 0]
   graded     <- rownames(det)[mn > 0 & mx >= GRADED_MIN & (mx / mn) >= GRADED_CUT]
+  protected  <- intersect(graded, PROTECT[[nm]])
+  graded     <- setdiff(graded, protected)
 
   msg("genes screened: ", format(nrow(det), big.mark = ","))
   msg("STRUCTURAL (>=", PRESENT_CUT * 100, "% in one dataset, exactly 0 in another): ",
       length(structural))
   msg("GRADED (>=", GRADED_CUT, "x detection spread, nonzero everywhere): ",
       length(graded))
+  msg("GRADED but protected (lineage markers, left in the HVG pool): ",
+      if (length(protected)) paste(protected, collapse = ", ") else "none")
 
   if (length(structural)) {
     top <- head(sort(mx[structural], decreasing = TRUE), 40)
@@ -124,7 +144,8 @@ for (nm in names(subsets)) {
                     max_pct = round(mx * 100, 3),
                     min_pct = round(mn * 100, 3),
                     class = ifelse(rownames(det) %in% structural, "STRUCTURAL",
-                             ifelse(rownames(det) %in% graded, "GRADED", "")),
+                             ifelse(rownames(det) %in% graded, "GRADED",
+                             ifelse(rownames(det) %in% protected, "GRADED_PROTECTED", ""))),
                     check.names = FALSE, stringsAsFactors = FALSE)
   out <- out[order(-out$max_pct), ]
   tf  <- file.path(DIR, paste0("batchgene_detection_", nm, ".tsv"))
@@ -138,6 +159,8 @@ for (nm in names(subsets)) {
   if (length(drop_ds)) add("  datasets too small to screen: ", paste(drop_ds, collapse = ", "))
   add("  structural absences: ", length(structural))
   add("  graded/ambient:      ", length(graded))
+  add("  graded but protected:", if (length(protected))
+        paste0(" ", length(protected), " (", paste(protected, collapse = ", "), ")") else " 0")
   add("  total excluded:      ", length(exclude[[nm]]))
   add("")
 
@@ -164,6 +187,9 @@ writeLines(c(
   "  Usually dataset-specific ambient RNA. Judgement call - review the tsv",
   "  before excluding, since a real biological difference between cohorts can",
   "  look like this. Do not exclude a gene you intend to use as a marker.",
+  "",
+  "GRADED_PROTECTED = graded, but on the per-subset PROTECT list of lineage",
+  "  markers in the script. Not excluded; enters HVG selection as normal.",
   "",
   "REVIEW THE TSV BEFORE TRUSTING THE GRADED LIST.",
   "",
