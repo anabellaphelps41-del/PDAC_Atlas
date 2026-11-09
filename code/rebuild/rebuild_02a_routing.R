@@ -5,6 +5,7 @@
 # Input : code/calls/cluster_calls_<subset>_res0.6_reviewed.tsv   (TNK, stromal, Bcell)
 #         <UP>/step4b_<subset>_res0.6_singler_percell.tsv         (cell -> v3 cluster)
 # Output: <DIR>/cell_routing.tsv
+#         <DIR>/cell_calls_v4run1.tsv   (second round, see the end of the script)
 #         <DIR>/PROVENANCE_02a_routing.txt
 # (UP = rebuild_v3, DIR = rebuild_v4; see io.R)
 #
@@ -95,6 +96,50 @@ writeLines(c(
   "CELLS EACH v4 SUBSET RECEIVES FROM THE v3 SUBSETS (myeloid/endothelial also",
   "get their own level2 cells in rebuild_02_subset.R)", show(into), "",
   "Cells of the v3 subsets that are not in these tables (GSE154778 B cells",
-  "dropped at step 3 for being < 150 cells) are reported by rebuild_02_subset.R."
+  "dropped at step 3 for being < 150 cells) are reported by rebuild_02_subset.R.",
+  "",
+  "SECOND ROUND (v4 run 1): see PROVENANCE section appended below, if present."
 ), PROV)
 msg("wrote ", PROV)
+
+# =============================================================================
+# Second round: decisions on the v4 run-1 res-0.6 clusters
+#   code/calls/v4_run1_decisions.tsv  (subset, run1_cluster, action, cell_flag,
+#                                      exclude_from_de_lr, label, reason)
+#   <DIR>/run1_snapshot/step4b_<subset>_res0.6_singler_percell.tsv (cell -> run-1 cluster)
+# -> <DIR>/cell_calls_v4run1.tsv, one row per cell of a decided cluster.
+#    rebuild_02_subset.R drops action == "drop" and carries cell_flag and
+#    exclude_from_de_lr into the objects, so a flag follows the cell into
+#    whatever cluster it joins after re-clustering.
+# =============================================================================
+DEC_F  <- file.path(CALLS_DIR, "v4_run1_decisions.tsv")
+SNAP   <- file.path(DIR, "run1_snapshot")
+OUT2   <- file.path(DIR, "cell_calls_v4run1.tsv")
+if (file.exists(DEC_F)) {
+  dec <- fread(DEC_F, colClasses = list(character = c("cell_flag", "label", "reason")))
+  if (!all(dec$action %in% c("keep", "drop"))) stop(DEC_F, ": action must be keep or drop")
+  if (!all(dec$subset %in% SUBSETS)) stop(DEC_F, ": unknown subset")
+  if (anyDuplicated(dec[, .(subset, run1_cluster)])) stop(DEC_F, ": a cluster is listed twice")
+  dec[, exclude_from_de_lr := as.logical(exclude_from_de_lr)]
+  per <- rbindlist(lapply(unique(dec$subset), function(s) {
+    f <- file.path(SNAP, sprintf("step4b_%s_res%s_singler_percell.tsv", s, RES))
+    if (!file.exists(f)) stop("run-1 snapshot missing: ", f)
+    x <- fread(f, select = c("cell", "cluster", "dataset_id"))
+    d <- dec[subset == s]
+    miss <- setdiff(d$run1_cluster, unique(x$cluster))
+    if (length(miss)) stop(s, ": run-1 cluster(s) not in the snapshot: ", paste(miss, collapse = ", "))
+    m <- merge(x, d, by.x = "cluster", by.y = "run1_cluster")
+    m[, .(cell, dataset_id, subset = s, run1_cluster = cluster, action, cell_flag, exclude_from_de_lr, label)]
+  }))
+  if (anyDuplicated(per$cell)) stop("a cell is in two decided run-1 clusters")
+  fwrite(per, OUT2, sep = "\t")
+  s2 <- per[, .(cells = .N), by = .(subset, run1_cluster, action, cell_flag)][order(subset, run1_cluster)]
+  print(s2)
+  msg("wrote ", OUT2, " (", nrow(per), " cells)")
+  cat(c("", "SECOND ROUND - decisions on v4 run-1 clusters",
+        paste("decisions:", DEC_F), paste("clusters :", SNAP), paste("output   :", OUT2), "",
+        show(s2)), file = PROV, sep = "\n", append = TRUE)
+} else {
+  msg("no ", DEC_F, "; second round skipped")
+  if (file.exists(OUT2)) file.remove(OUT2)
+}

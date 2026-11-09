@@ -1,0 +1,5 @@
+subset	run2_cluster	n_cells	action	cell_flag	exclude_from_de_lr	label	reason
+myeloid	16	328	drop		FALSE	Residual low-quality P26 myeloid droplets	Same rule as run-1 myeloid c0: 89% P26 (291 of 328); KRT19, COL1A1, MMP7 and SPINK1 still top markers after DecontX; median 576 genes; contamination 0.21. The whole cluster goes, including 37 cells from six other samples
+TNK	5	4527	keep	stress_overlay	TRUE	CD8 GZMK+ Tem, stress-high	40% were run-1 stress cells and the cluster is still heat-shock-high (HSPA1A/B, dissociation 1.09); 75% from P03 and P14. Every cell gets the flag; cells already flagged (mt_high_sample, 1%) keep theirs. Takes 28% of the CD8 GZMK+ Tem cells out of DE/LR
+endothelial	11	203	drop		FALSE	Myeloid cells (FCN1+C5AR1+CD163+)	Misplaced myeloid cells. DecontX treated their myeloid genes as contamination (0.48) because they were labelled endothelial (via v3 stromal 12). Dropped; 01d is not rerun with corrected labels
+endothelial	12	145	drop		FALSE	Pericytes (ABCC9+PDGFRB+HIGD1B+)	Misplaced pericytes with the same DecontX label problem. Dropped; 01d is not rerun with corrected labels

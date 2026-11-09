@@ -1,5 +1,50 @@
 # Cluster calls
 
+Two rounds so far:
+
+- `cluster_calls_{TNK,stromal,Bcell}_res0.6_reviewed.tsv`: v3 clusters, reviewed;
+  applied by `rebuild_02a_routing.R` to build v4.
+- `cluster_calls_{TNK,stromal,Bcell,myeloid,endothelial}_v4run1_res0.6.tsv`:
+  draft calls on the first v4 clustering (`rebuild_v4/run1_snapshot/`). They
+  were never reviewed row by row, and are kept for the record. The columns are
+  the reviewed columns plus `v3_origin` and `followup`.
+- `cluster_calls_{TNK,stromal,Bcell,myeloid,endothelial}_v4_res0.6.tsv`: DRAFT
+  calls on v4 run 2 (wider stress mask), awaiting review. The columns are:
+  - `call` (keep / drop / route) and `route_to`;
+  - `confidence`: `decided` for rows that carry a user decision from run 1;
+  - `run1_origin`: which run-1 clusters the cells came from;
+  - `samples`: samples with at least 5% of the cluster, and the top three;
+  - `cell_flags`: the share of cells carrying each run-1 flag;
+  - empty reviewer columns.
+
+  Myeloid c14 is split in `subcluster_res0.6` (14a cDC1 / 14b mregDC) by
+  `rebuild_04c_subcluster.R`.
+
+  Reviewer columns are filled only for the rows decided on 2026-11-09
+  (myeloid c16, TNK c5, stromal c7, endothelial c11/c12); the rest are
+  still drafts.
+- `v4_run2_decisions.tsv`: the machine-readable form of those run-2
+  decisions, in the run-1 format plus `n_cells`:
+  - drops: myeloid c16, endothelial c11 and c12. DecontX is not rerun for
+    the endothelial ones;
+  - a whole-cluster `stress_overlay` flag with `exclude_from_de_lr` on
+    TNK c5. Cells that already carry a flag keep it.
+
+  Stromal c7 gets no cluster flag: its cells keep their run-1 flags only.
+  These apply to the run-2 clusters as they are, without re-clustering.
+  Nothing reads the file yet. Step 05 will, and it must stop if
+  `n_cells` no longer matches, because a rerun of 03 renumbers the clusters.
+- `v4_run1_decisions.tsv`: the user's decisions on specific v4 run-1 clusters
+  (2026-11-09). `rebuild_02a_routing.R` turns them into per-cell actions
+  (`cell_calls_v4run1.tsv`):
+  - one drop: myeloid c0;
+  - `cell_flag` / `exclude_from_de_lr` on the stress-overlay, patient-specific,
+    few-donor and high-contamination clusters.
+
+  The flags follow each cell into whatever cluster it joins after the
+  re-clustering with the wider stress mask (v4 run 2). Cells with
+  `exclude_from_de_lr` stay out of DE and ligand-receptor work.
+
 Hand-reviewed decisions for each Harmony cluster, one table per subset and
 resolution: `cluster_calls_<subset>_res<res>_reviewed.tsv`. They are kept
 here, under version control, because they are human decisions and not

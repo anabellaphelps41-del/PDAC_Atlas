@@ -24,6 +24,10 @@
 #       doublet    scDblFinder_class == "doublet"
 #       qc_floor   below the per dataset x compartment floor (rebuild_01d)
 #       reviewed   cluster call 'drop' (code/calls)
+#       v4 run 1   'drop' in code/calls/v4_run1_decisions.tsv (via cell_calls_v4run1.tsv)
+#   - v4 run-1 decisions also set cell_flag and exclude_from_de_lr per cell
+#     (stress overlay, patient-specific, few donors, ...), so the flag stays
+#     with the cell whatever cluster it joins after re-clustering.
 #   - CHANGED FROM v3: celltype_level3 'Neutrophil-like' cells are no longer
 #     removed. v3 dropped them as a GSE155698 artifact (85.6% of them), but
 #     that figure counted blood samples. In the included samples GSE155698 has
@@ -119,6 +123,23 @@ md$v3_celltype_label <- rt$celltype_label[ri]
 md$v3_followup       <- rt$followup[ri]
 md$v3_to_subset      <- rt$to_subset[ri]
 
+# Second-round decisions on v4 run-1 clusters (rebuild_02a_routing.R), if any:
+# drops, plus per-cell flags that follow the cell through re-clustering.
+C2 <- file.path(DIR, "cell_calls_v4run1.tsv")
+md$v4r1_cluster <- NA_integer_; md$v4r1_action <- NA_character_; md$v4r1_label <- NA_character_
+md$cell_flag <- ""; md$exclude_from_de_lr <- FALSE
+if (file.exists(C2)) {
+  c2 <- fread(C2, colClasses = list(character = c("cell_flag", "label")))
+  ci <- match(rownames(md), c2$cell)
+  md$v4r1_cluster <- c2$run1_cluster[ci]
+  md$v4r1_action  <- c2$action[ci]
+  md$v4r1_label   <- c2$label[ci]
+  md$cell_flag[!is.na(ci)] <- c2$cell_flag[ci[!is.na(ci)]]
+  md$exclude_from_de_lr[!is.na(ci)] <- as.logical(c2$exclude_from_de_lr[ci[!is.na(ci)]])
+  msg("v4 run-1 decisions: ", nrow(c2), " cells (", sum(c2$action == "drop"), " to drop, ",
+      sum(nzchar(c2$cell_flag)), " flagged)")
+}
+
 # Compartment from level2, then the routing
 cmp <- rep(NA_character_, nrow(md))
 for (nm in names(defs)) cmp[md$celltype_level2 %in% defs[[nm]]$level2] <- nm
@@ -151,6 +172,8 @@ if (any(lost)) stop(sum(lost), " compartment cells are missing from decontx_perc
 why[!nzchar(why) & md$qc_pass %in% FALSE] <- "QC floor (rebuild_01d)"
 rdrop <- !nzchar(why) & md$v3_action %in% "drop"
 why[rdrop] <- paste0("reviewed call: drop (v3 ", md$v3_subset[rdrop], " cluster ", md$v3_cluster[rdrop], ")")
+r2drop <- !nzchar(why) & md$v4r1_action %in% "drop"
+why[r2drop] <- paste0("v4 run-1 call: drop (cluster ", md$v4r1_cluster[r2drop], ")")
 keep_global <- !nzchar(why)
 
 # Final subset membership: level2 compartment, overridden by routing
@@ -268,6 +291,10 @@ writeLines(c(
   "  doublet    scDblFinder_class == 'doublet' (per sample, whole atlas)",
   "  qc_floor   below median - 3 MAD of log10 nFeature/nCount, per dataset x compartment (01d)",
   "  reviewed   cluster call 'drop' in code/calls/*_reviewed.tsv",
+  "  v4 run 1   'drop' in code/calls/v4_run1_decisions.tsv (run-1 clusters, rebuild_v4/run1_snapshot)",
+  sprintf("  per-cell flags from the v4 run-1 decisions: %s",
+          paste(sprintf("%s=%d", names(table(md$cell_flag[nzchar(md$cell_flag) & keep_global])),
+                        as.integer(table(md$cell_flag[nzchar(md$cell_flag) & keep_global]))), collapse = ", ")),
   "  NOT excluded any more: celltype_level3 'Neutrophil-like' (see script header).",
   "",
   show(do.call(rbind, excluded)),
@@ -287,6 +314,7 @@ writeLines(c(
   "  primary_or_metastatic, patient_diagnosis, treatment_status, scDblFinder_score/class,",
   "  decontX_contamination/status, qc_pass + floors, compartment_level2, subset_v4,",
   "  v3_subset, v3_cluster, v3_action, v3_to_subset, v3_celltype_label, v3_followup,",
+  "  v4r1_cluster, v4r1_action, v4r1_label, cell_flag, exclude_from_de_lr,",
   "  percent.mt.recomputed."
 ), prov)
 

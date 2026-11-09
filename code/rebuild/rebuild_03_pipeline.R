@@ -146,15 +146,22 @@ ambient <- c("MALAT1", "NEAT1", "XIST",
 #     Still plottable -- if a cluster turns out to be stress-defined you will
 #     see it in the marker step.
 stress <- c("FOS", "JUN", "JUNB", "EGR1", "HSPA1A", "HSPA1B", "DNAJB1")
-# Optional wider set (van den Brink et al. 2017). Not enabled -- enabling it
-# is a deliberate call, not a default:
-# stress <- c(stress, "FOSB","JUND","ATF3","IER2","IER3","SOCS3","ZFP36",
-#             "HSPB1","HSPH1","HSPA8","DUSP1","KLF6","PPP1R15A")
+# Wider set, enabled 2026-11-09 (v4 run 2) by the user's decision. With only
+# the 7 genes above masked, HSPA6, DNAJA4, HSPB1 and the metallothioneins still
+# shaped v4 run-1 clusters: TNK c8, myeloid c2 and B c4 dissolved into
+# ordinary cell types once these were masked too (cluster stability 0.83 ->
+# 0.26, 0.92 -> 0.55, 0.77 -> 0.34). Sources: the van den Brink et al. 2017
+# genes in the old comment here, the heat-shock genes that defined those
+# clusters, and the metallothioneins (MT1*, MT2A; TNK c13 was MT-defined).
+stress <- c(stress, "FOSB", "JUND", "ATF3", "IER2", "IER3", "SOCS3", "ZFP36",
+            "HSPB1", "HSPH1", "HSPA8", "DUSP1", "KLF6", "PPP1R15A",
+            "HSPA6", "DNAJA4", "DNAJB4", "BAG3", "ZFAND2A")
+stress_rx <- "^MT1[A-Z]$|^MT2A$"
 
 g          <- rownames(sub)
 m_rx       <- grep(mask_rx, g, value = TRUE)
 m_ambient  <- intersect(ambient, g)
-m_stress   <- intersect(stress,  g)
+m_stress   <- union(intersect(stress, g), grep(stress_rx, g, value = TRUE))
 m_batch    <- intersect(batch_excl, g)
 masked     <- unique(c(m_rx, m_ambient, m_stress, m_batch))
 
@@ -432,7 +439,8 @@ prov <- c(
   "are still plottable as markers at Step 4)",
   sprintf("  regex   : %s", mask_rx),
   sprintf("  ambient : %s", paste(ambient, collapse = ", ")),
-  sprintf("  stress  : %s", paste(stress, collapse = ", ")),
+  sprintf("  stress  : %s + %s (%d genes present: %s)", paste(stress, collapse = ", "), stress_rx,
+          length(m_stress), paste(sort(m_stress), collapse = ", ")),
   sprintf("  batch   : %d genes from exclude_batchgenes.rds[['%s']]", length(m_batch), SUBSET),
   sprintf("  masked total %d of %d genes", length(masked), length(g)),
   sprintf("  vst pool %d -> %d masked out -> %d HVGs used",

@@ -273,6 +273,13 @@ dec <- data.frame(
                        round(med(sub$percent.mt), 2) else NA,
   median_contamination = if ("decontX_contamination" %in% colnames(sub@meta.data))
                        round(med(sub$decontX_contamination), 3) else NA,
+  # per-cell flags carried from the v4 run-1 decisions (rebuild_02_subset.R)
+  pct_flagged      = if ("cell_flag" %in% colnames(sub@meta.data))
+                       vapply(idx, function(ii) round(100 * mean(nzchar(sub$cell_flag[ii])), 1), numeric(1)) else NA,
+  cell_flags       = if ("cell_flag" %in% colnames(sub@meta.data))
+                       vapply(idx, function(ii) { t <- table(sub$cell_flag[ii][nzchar(sub$cell_flag[ii])])
+                         if (!length(t)) "" else paste(sprintf("%s %.0f%%", names(t), 100 * as.numeric(t) / length(ii)), collapse = ";") },
+                         character(1)) else NA,
   round(lin, 1),
   round(score_by_cl, 3),
   top_markers      = vapply(names(idx), function(cl)
