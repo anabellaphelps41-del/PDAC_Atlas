@@ -1,0 +1,4 @@
+subset	subcluster	n_cells	lineage	celltype_label	note
+myeloid	14a	206	myeloid	cDC1 (CLEC9A+XCR1+CADM1+)	rebuild_04c panel a: XCR1, CLEC9A, CADM1
+myeloid	14b	208	myeloid	mregDC (LAMP3+CCR7+CCL22+FSCN1+)	rebuild_04c panel b: LAMP3, CCR7, CCL22, FSCN1
+myeloid	14u	44	myeloid	DC, unassigned (neither cDC1 nor mregDC panel)	detects neither panel, or ties

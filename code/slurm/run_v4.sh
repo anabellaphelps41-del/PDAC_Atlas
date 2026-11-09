@@ -13,6 +13,11 @@
 #         RES=0.8 bash code/slurm/run_v4.sh 04  # 04 -> 04b only, at another resolution
 #         AFTER=123 bash code/slurm/run_v4.sh 02b   # start once job 123 succeeds
 #         SUBSETS="stromal Bcell" bash code/slurm/run_v4.sh 03
+#         bash code/slurm/run_v4.sh 05          # apply the reviewed calls (05 only)
+#         PDAC_DRAFT_CALLS=1 bash code/slurm/run_v4.sh 05   # same, draft calls allowed
+#
+# 05 is never chained after 04b: the call tables have to be reviewed in
+# between. It only reads the harmony objects, so the subsets run in parallel.
 #
 # Each step only starts if the previous one exited 0 (afterok). Logs go to
 # PDAC_Atlas/logs/<jobname>_<jobid>.{out,err}.
@@ -31,6 +36,14 @@ submit() {  # submit <sbatch args...>; echoes the job id
   out=$(sbatch --parsable ${dep:+--dependency=afterok:$dep} "$@")
   echo "${out%%;*}"
 }
+
+if [[ $FROM == 05 ]]; then
+  for sub in $SUBSETS; do
+    j=$(submit -J "rb4_05_${sub}_$RES" "$S/05_apply_calls.sbatch" "$sub" "$RES")
+    echo "  05 $sub res $RES -> job $j"
+  done
+  exit 0
+fi
 
 for step in "${order[@]}"; do
   [[ $step == "$FROM" ]] && started=1

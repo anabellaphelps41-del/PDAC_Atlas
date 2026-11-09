@@ -23,6 +23,8 @@ cluster numbers.
 | 03 | `rebuild/rebuild_03_pipeline.R <subset>` | subset, batch genes | `subset_<subset>_harmony.qs2`, QC pdf, cluster composition |
 | 04 | `rebuild/rebuild_04_markers.R <subset> [res]` | harmony object | markers, decision table (**re-saves its input**) |
 | 04b | `rebuild/rebuild_04b_singler.R <subset> [res]` | harmony object, `ref/celldex_*.rds` | SingleR lineage gate (**re-saves its input**) |
+| 04c | `rebuild/rebuild_04c_subcluster.R <subset> <res> <cluster> <markersA> <markersB>` | harmony object | `subcluster_res<res>` column, marker-defined (**re-saves its input**) |
+| 05 | `rebuild/rebuild_05_apply_calls.R <subset> [res]` | harmony object (read only), `calls/cluster_calls_<subset>_v4_res<res>.tsv`, `calls/v4_run2_decisions.tsv`, `calls/subcluster_labels_v4_res<res>.tsv` | `subset_<subset>_final.qs2` (kept cells, `celltype_v4` / `lineage_v4`, flags), `step5_*_cells.tsv`, `step5_*_summary.tsv` |
 | 00 | `rebuild/rebuild_00_provenance_audit.R` | subsets | metadata audit tables |
 
 02a runs before 01d because DecontX takes its cell-type labels from the
@@ -35,7 +37,20 @@ bash code/slurm/run_v3.sh              # 00m -> 01 -> 01c (atlas level)
 bash code/slurm/run_v4.sh              # 02a -> 01d -> 02 -> 02b -> (03 -> 04 -> 04b) x 5
 bash code/slurm/run_v4.sh 03           # resume from step 03
 RES=0.8 bash code/slurm/run_v4.sh 04   # markers + gate at another resolution
+bash code/slurm/run_v4.sh 05           # apply the reviewed calls (after review only)
+PDAC_DRAFT_CALLS=1 bash code/slurm/run_v4.sh 05   # draft: unreviewed rows use the draft call
 ```
+
+Step 05 is never chained after 04b, because the call tables are reviewed in
+between. It stops in four cases:
+- the call table's clusters or `n_cells` don't match the object (03 was
+  rerun);
+- a cluster has no `reviewer_call` (unless it is a draft run);
+- a call is `route`, which needs a rerun from 02a;
+- `v4_run2_decisions.tsv` disagrees with the table.
+
+A draft run writes to `rebuild_v4/step5_draft/`, never next to the reviewed
+outputs.
 
 04 and 04b re-save the harmony object, so run_v4.sh chains them per subset;
 never run two of them on the same subset at once. Logs:

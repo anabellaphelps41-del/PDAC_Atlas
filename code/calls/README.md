@@ -32,8 +32,17 @@ Two rounds so far:
 
   Stromal c7 gets no cluster flag: its cells keep their run-1 flags only.
   These apply to the run-2 clusters as they are, without re-clustering.
-  Nothing reads the file yet. Step 05 will, and it must stop if
-  `n_cells` no longer matches, because a rerun of 03 renumbers the clusters.
+  `rebuild_05_apply_calls.R` reads the file. It stops if `n_cells` or the
+  action disagrees with the call table, because a rerun of 03 renumbers the
+  clusters.
+- `subcluster_labels_v4_res0.6.tsv`: names for the `subcluster_res0.6`
+  groups made by `rebuild_04c_subcluster.R` (myeloid 14a cDC1, 14b mregDC,
+  14u unassigned), with their `n_cells`. Step 05 uses them in place of the
+  cluster's own label.
+
+Step 05 takes `reviewer_call` where it is filled, and the draft `call`
+otherwise. It only runs once every row is reviewed, unless
+`PDAC_DRAFT_CALLS=1` is set.
 - `v4_run1_decisions.tsv`: the user's decisions on specific v4 run-1 clusters
   (2026-11-09). `rebuild_02a_routing.R` turns them into per-cell actions
   (`cell_calls_v4run1.tsv`):
