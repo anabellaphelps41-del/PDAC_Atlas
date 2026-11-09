@@ -1,0 +1,22 @@
+cluster	n_cells	call	lineage	qc_flags	confidence	evidence	celltype_label	reviewer_call	review	reviewer_note	check_result	action	route_to	followup	lineage_reviewed
+0	9876	keep	Tcell		clear	CD8 GZMK/CRTAM/IFNG effector-memory	CD8 GZMK+ Tem	keep	agree			keep			Tcell
+1	9323	keep	Tcell		clear	CD4 memory/Th17-like: CD40LG/CCR6/IL7R	CD4 Th17-like memory (CCR6+)	keep	verify	KLRB1/CCR6 also marks MAIT; check SLC4A10/TRAV1-2.		keep		marker_check	Tcell
+2	5984	keep	Tcell		clear	Treg: FOXP3/IL2RA/TNFRSF4/TNFRSF18	CD4 Treg (FOXP3+)	keep	agree			keep			Tcell
+3	5892	keep	Tcell	ambient_myeloid;low_complexity;single_dataset	judgement	CXCL13+ with SPP1/APOE/CST3/CTSB ambient; nFeature 747; 87.9% GSE205013	CXCL13+ T, myeloid-doublet/ambient	verify	disagree	5,892 cells: SPP1/APOE/CST3/CTSB + nFeature 747 + 87.9% GSE205013. Run doublet scoring and split CD4 vs CD8 before calling it Tph/Tex. A TLS claim shouldn't rest on this cluster.	not a doublet: scDblFinder median 0.000 (0.4% > 0.5); GSE205013 88% is only 1.6x its 55% TNK share. SPP1/APOE likely ambient -> decontaminate	keep		recheck_after_decontx;marker_check	Tcell
+4	5783	keep	Tcell	ambient_acinar	judgement	KLRC1+; acinar panel 38%, top markers CPA1/CLPS/CEL/PRSS1 (S/G)	KLRC1+ CD8 / gamma-delta T	keep	verify	KLRC1 is high in gd T; check TRDC/TRGC1 vs CD8A.		keep		recheck_after_decontx;marker_check	Tcell
+5	5506	keep	Tcell	low_complexity	judgement	XIST/ATM/NKTR nuclear transcripts; nFeature 691	Low-quality cells (nuclear transcripts)	drop	disagree	XIST/ATM/NKTR with nFeature 691 is a standard low-quality signature, not a T state. 5,506 cells.		drop			Tcell
+6	4952	keep	Tcell		clear	naive/central memory: LEF1/TCF7/MAL/S1PR1	Naive/central memory T (TCF7+LEF1+)	keep	agree	Specify CD4 vs CD8.		keep		marker_check	Tcell
+7	3959	keep	Tcell		clear	naive CD4: CCR7/LEF1/TSHZ2	Naive CD4 T (CCR7+TSHZ2+)	keep	agree			keep			Tcell
+8	3902	keep	NK		clear	FGFBP2/CX3CR1/KLRF1/FCGR3A; SingleR NK 99%	CD56dim CD16+ NK	keep	agree			keep			NK
+9	3264	keep	Tcell	stress_heatshock;low_complexity;single_dataset	judgement	HSPA6/DNAJA4/BAG3/HSPA1A; nFeature 628; 81% GSE205013	Stress-response T (HSP+), artifact-likely	drop or flag	disagree	Zheng 2021 calls these Tstr, but low complexity + 81% one dataset reads as dissociation artifact.	GSE205013 81% is 1.5x its 55% TNK share; scDblFinder median 0.000	keep		recheck_dissociation	Tcell
+10	2489	keep	Tcell		clear	CX3CR1+ GZMH effector CD8 (NK panel 67%, SingleR Tcell 69%)	CD8 Temra/effector (CX3CR1+GZMH+)	keep	agree			keep			Tcell
+11	2319	keep	Tcell	ambient_RBC	clear	CCR7/PASK; RBC panel 31%	Naive/Tcm T (CCR7+PASK+)	keep	verify	Probably redundant with 6/7. Check after RBC decontamination.		keep		recheck_after_decontx	Tcell
+12	2290	keep	NK		clear	KRT81/KRT86/TMIGD2/SH2D1B, CD56bright-like; SingleR NK 93%	CD56bright NK (KRT86+)	keep	agree			keep			NK
+13	2107	keep	Tcell		clear	cycling: MKI67/TYMS/BIRC5	Cycling T	keep	agree			keep			Tcell
+14	1756	drop	RBC_lowquality		clear	ALAS2/HBA1/HBB; nFeature 279; 80% GSE205013; SingleR epithelial 24%	RBC / low-quality	drop	agree			drop			RBC_lowquality
+15	1541	keep	Tcell	metallothionein;single_dataset	judgement	MT1G/MT1X/MT2A; 91% GSE212966; fibroblast panel 31%	Metallothionein-high T (MT+)	keep	verify	91% GSE212966, the same dataset driving B cluster 1. Batch-driven.	GSE212966 91% = 3.5x its 26% TNK share: real batch enrichment	keep		recheck_after_reintegration	Tcell
+16	1312	drop	RBC_lowquality		clear	S100A8/S100A9/G0S2/HBB/CXCL8; nFeature 505; 93% GSE205013; SingleR Tcell 39%	Neutrophil (misrouted)	route->myeloid	disagree	S100A8/S100A9/G0S2/CXCL8 at nFeature ~500 is the neutrophil signature, not RBC. Drop from TNK is right but relabel and route.	mixed: neutrophil genes (S100A8/S100A9/G0S2/CXCL8) plus erythroid genes (HBB/HBA2/SNCA/SLC25A37, RBC panel 80%); 02 already drops level3 'Neutrophil-like' as a single-dataset artefact	route	myeloid		neutrophil
+17	1091	keep	Tcell		clear	CXCL13+ Tfh/Tph-like: TOX2/CH25H/ICA1	CD4 CXCL13+ Tph/Tfh	keep	agree			keep			Tcell
+18	818	keep	NK	ambient_RBC	clear	PTGDS/FGFBP2/KLRF1/GNLY; SingleR NK 83%; RBC panel 49%	CD56dim NK (PTGDS+), RBC-ambient	keep	verify	Likely merges with 8 after decontamination.		keep		recheck_after_decontx	NK
+19	807	keep	Tcell		clear	interferon-stimulated: IFIT1/IFIT3/MX1	Interferon-stimulated T (ISG+)	keep	agree			keep			Tcell
+20	290	drop	Bcell		clear	AICDA/PAX5/CD22/VPREB3; SingleR Bcell 88%	B cell (misrouted)	route->Bcell	agree	AICDA+ = GC B; route to B object.		route	Bcell		Bcell
