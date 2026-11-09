@@ -6,7 +6,16 @@
 #             -> FindNeighbors -> FindClusters resolution sweep -> UMAP
 #
 # Usage:  Rscript rebuild_03_pipeline.R <subset>
-#         <subset> in {stromal, TNK, Bcell}   (default: stromal)
+#         <subset> in {TNK, stromal, Bcell, myeloid, endothelial}
+#
+# Runs on the default assay: decontX in v4 (rebuild_02_subset.R), RNA in v3.
+# Cluster columns are named <assay>_snn_res.<r>.
+#
+# BATCH KEY: Harmony runs on PDAC_HARMONY_KEY (default dataset_id) and, for
+# comparison only, once more on the other key (sample_key). The comparison
+# reports batch mixing, how often a cell's neighbours share its tissue_class
+# (a drop means real tumour/normal differences are being corrected away), and
+# the adjusted Rand index between the two res-0.6 clusterings.
 #
 # Input : <DIR>/subset_<subset>.qs2
 #         (built by rebuild_02_subset.R from atlas_harmonized_counts_v3.qs2)
@@ -45,11 +54,10 @@ for (p in c("harmony", "RANN")) {
 # =============================== parameters ==================================
 args   <- commandArgs(trailingOnly = TRUE)
 SUBSET <- if (length(args) >= 1) args[1] else "stromal"
-stopifnot(SUBSET %in% c("stromal", "TNK", "Bcell"))
+source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj(), save_obj(), dirs
+stopifnot(SUBSET %in% SUBSETS)
 
-source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj() / save_obj()
-
-DIR  <- Sys.getenv("PDAC_REBUILD_DIR", "/ix/tbruno/anp795/PDAC_Atlas/rebuild_v3")
+DIR  <- V4_DIR
 IN   <- file.path(DIR, sprintf("subset_%s.qs2", SUBSET))
 OUT  <- file.path(DIR, sprintf("subset_%s_harmony.qs2", SUBSET))
 PDFF <- file.path(DIR, sprintf("step3_%s_qc.pdf", SUBSET))
@@ -65,6 +73,9 @@ RESOLUTIONS         <- c(0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.6)
 SEED                <- 42
 NTHREADS            <- max(1L, as.integer(Sys.getenv("SLURM_CPUS_PER_TASK", "4")))  # Harmony BLAS threads
 K_MIX               <- 30      # k for the batch-mixing diagnostic
+HARMONY_KEY         <- Sys.getenv("PDAC_HARMONY_KEY", "dataset_id")
+ALT_KEY             <- if (HARMONY_KEY == "dataset_id") "sample_key" else "dataset_id"
+stopifnot(HARMONY_KEY %in% c("dataset_id", "sample_key"))
 
 set.seed(SEED)
 
@@ -78,7 +89,10 @@ sub <- read_obj(IN)
 ts("loaded: ", format(nrow(sub), big.mark = ","), " genes x ",
    format(ncol(sub), big.mark = ","), " cells")
 
-stopifnot("dataset_id" %in% colnames(sub@meta.data))
+stopifnot(all(c("dataset_id", "sample_key", "tissue_class") %in% colnames(sub@meta.data)))
+ASSAY      <- DefaultAssay(sub)
+RES_PREFIX <- paste0(ASSAY, "_snn_res.")
+ts("default assay: ", ASSAY, " | Harmony key: ", HARMONY_KEY, " (comparison: ", ALT_KEY, ")")
 
 tab     <- sort(table(sub$dataset_id), decreasing = TRUE)
 ts("cells per dataset_id:")
@@ -192,9 +206,9 @@ sub <- RunUMAP(sub, reduction = "pca", dims = 1:N_DIMS,
                seed.use = SEED, verbose = FALSE)
 
 # ============================ 5. Harmony =====================================
-ts("RunHarmony(group.by.vars = 'dataset_id', dims 1:", N_PCS, ")")
+ts("RunHarmony(group.by.vars = '", HARMONY_KEY, "', dims 1:", N_PCS, ")")
 sub <- harmony::RunHarmony(sub,
-                           group.by.vars = "dataset_id",
+                           group.by.vars = HARMONY_KEY,
                            reduction.use = "pca",
                            dims.use      = 1:N_PCS,
                            reduction.save = "harmony",
@@ -203,16 +217,32 @@ sub <- harmony::RunHarmony(sub,
                            verbose = TRUE)
 ts("harmony embedding: ", paste(dim(Embeddings(sub, "harmony")), collapse = " x "))
 
-# ---- batch-mixing diagnostic: fraction of a cell's kNN from a OTHER dataset
-mix_score <- function(emb, batch, k = K_MIX) {
-  nn <- RANN::nn2(emb, k = k + 1)$nn.idx[, -1, drop = FALSE]
-  b  <- as.character(batch)
-  mean(rowMeans(matrix(b[nn], nrow = nrow(nn)) != b))
+ts("RunHarmony(group.by.vars = '", ALT_KEY, "') for comparison only")
+sub <- harmony::RunHarmony(sub, group.by.vars = ALT_KEY, reduction.use = "pca",
+                           dims.use = 1:N_PCS, reduction.save = "harmony_alt",
+                           ncores = NTHREADS, plot_convergence = FALSE, verbose = FALSE)
+
+# ---- diagnostics on the kNN graph of each embedding
+#   mixing : fraction of a cell's neighbours from ANOTHER dataset
+#   tissue : fraction of a cell's neighbours with the SAME tissue_class
+knn_of  <- function(emb, k = K_MIX) RANN::nn2(emb, k = k + 1)$nn.idx[, -1, drop = FALSE]
+nb_frac <- function(nn, lab, same) {
+  l <- as.character(lab); m <- matrix(l[nn], nrow = nrow(nn))
+  mean(rowMeans(if (same) m == l else m != l))
 }
+nn_pca  <- knn_of(Embeddings(sub, "pca")[, 1:N_DIMS])
+nn_harm <- knn_of(Embeddings(sub, "harmony")[, 1:N_DIMS])
+nn_alt  <- knn_of(Embeddings(sub, "harmony_alt")[, 1:N_DIMS])
 p_ds     <- as.numeric(prop.table(table(sub$dataset_id)))
 mix_ideal<- 1 - sum(p_ds^2)      # expected score under perfect mixing
-mix_pca  <- mix_score(Embeddings(sub, "pca")[, 1:N_DIMS], sub$dataset_id)
-mix_harm <- mix_score(Embeddings(sub, "harmony")[, 1:N_DIMS], sub$dataset_id)
+mix_pca  <- nb_frac(nn_pca,  sub$dataset_id, same = FALSE)
+mix_harm <- nb_frac(nn_harm, sub$dataset_id, same = FALSE)
+mix_alt  <- nb_frac(nn_alt,  sub$dataset_id, same = FALSE)
+tis_rand <- sum(as.numeric(prop.table(table(sub$tissue_class)))^2)   # random neighbours
+tis_pca  <- nb_frac(nn_pca,  sub$tissue_class, same = TRUE)
+tis_harm <- nb_frac(nn_harm, sub$tissue_class, same = TRUE)
+tis_alt  <- nb_frac(nn_alt,  sub$tissue_class, same = TRUE)
+rm(nn_pca, nn_harm, nn_alt)
 
 ts("kNN batch mixing (k = ", K_MIX, "), fraction of neighbours from another dataset:")
 cat(sprintf("    before Harmony (PCA)  : %.3f\n", mix_pca))
@@ -224,6 +254,12 @@ cat("    READ: if 'after' is not well above 'before', Harmony under-corrected.\n
 cat("          Options then: more dims, or switch to scVI/scANVI (GPU).\n")
 cat("          If 'after' overshoots the target, you may be over-correcting\n")
 cat("          and erasing real biology -- check that known subtypes survive.\n")
+cat(sprintf("    with Harmony on %-11s: %.3f\n", ALT_KEY, mix_alt))
+ts("tissue_class neighbourhood (fraction of neighbours with the same tissue_class):")
+cat(sprintf("    PCA %.3f | Harmony %s %.3f | Harmony %s %.3f | random %.3f\n",
+            tis_pca, HARMONY_KEY, tis_harm, ALT_KEY, tis_alt, tis_rand))
+cat("    READ: the further an embedding falls from PCA toward random, the more\n")
+cat("          tumour vs normal difference it has removed.\n")
 
 # ============================ 6. cluster sweep + UMAP ========================
 ts("FindNeighbors on harmony dims 1:", N_DIMS)
@@ -233,12 +269,31 @@ for (r in RESOLUTIONS) {
   sub <- FindClusters(sub, resolution = r, algorithm = 1,
                       random.seed = SEED, verbose = FALSE)
   ts("  resolution ", r, " -> ",
-     nlevels(sub[[paste0("RNA_snn_res.", r)]][, 1]), " clusters")
+     nlevels(sub[[paste0(RES_PREFIX, r)]][, 1]), " clusters")
 }
+
+# the comparison embedding, clustered at 0.6 only
+ari <- function(a, b) {
+  tab <- table(a, b); c2 <- function(x) sum(choose(x, 2))
+  e <- c2(rowSums(tab)) * c2(colSums(tab)) / choose(sum(tab), 2)
+  (c2(tab) - e) / ((c2(rowSums(tab)) + c2(colSums(tab))) / 2 - e)
+}
+main_idents <- Idents(sub); main_sc <- sub$seurat_clusters   # FindClusters below resets both
+sub <- FindNeighbors(sub, reduction = "harmony_alt", dims = 1:N_DIMS,
+                     graph.name = c("alt_nn", "alt_snn"), verbose = FALSE)
+sub <- FindClusters(sub, graph.name = "alt_snn", resolution = 0.6, algorithm = 1,
+                    cluster.name = "alt_res.0.6", random.seed = SEED, verbose = FALSE)
+Idents(sub) <- main_idents; sub$seurat_clusters <- main_sc
+ari_06 <- ari(sub[[paste0(RES_PREFIX, 0.6)]][, 1], sub$alt_res.0.6)
+ts("res 0.6: ", nlevels(sub[[paste0(RES_PREFIX, 0.6)]][, 1]), " clusters (", HARMONY_KEY, ") vs ",
+   nlevels(sub$alt_res.0.6), " (", ALT_KEY, "); adjusted Rand index ", sprintf("%.3f", ari_06))
 
 ts("RunUMAP on harmony dims 1:", N_DIMS)
 sub <- RunUMAP(sub, reduction = "harmony", dims = 1:N_DIMS,
                reduction.name = "umap", reduction.key = "umap_",
+               seed.use = SEED, verbose = FALSE)
+sub <- RunUMAP(sub, reduction = "harmony_alt", dims = 1:N_DIMS,
+               reduction.name = "umap_alt", reduction.key = "umapalt_",
                seed.use = SEED, verbose = FALSE)
 
 # ============================ 7. cluster composition =========================
@@ -248,7 +303,7 @@ sub <- RunUMAP(sub, reduction = "harmony", dims = 1:N_DIMS,
 comp_rows <- list()
 ts("per-resolution cluster purity (clusters dominated by a single dataset):")
 for (r in RESOLUTIONS) {
-  col  <- paste0("RNA_snn_res.", r)
+  col  <- paste0(RES_PREFIX, r)
   cl   <- sub[[col]][, 1]
   ct   <- table(cl, sub$dataset_id)
   frac <- prop.table(ct, 1)
@@ -280,7 +335,11 @@ marker_panels <- list(
   TNK     = c("CD3D", "CD3E", "CD4", "CD8A", "IL7R", "CCR7",
               "FOXP3", "CTLA4", "GZMK", "GNLY", "KLRD1", "MKI67"),
   Bcell   = c("MS4A1", "CD79A", "BANK1", "TCL1A", "CD27", "AIM2",
-              "MZB1", "XBP1", "TNFRSF17", "JCHAIN", "BCL6", "AICDA")
+              "MZB1", "XBP1", "TNFRSF17", "JCHAIN", "BCL6", "AICDA"),
+  myeloid = c("CD68", "C1QA", "APOE", "SPP1", "CD14", "FCN1",
+              "CSF3R", "FCGR3B", "CLEC9A", "CD1C", "LAMP3", "LILRA4", "TPSAB1", "MKI67"),
+  endothelial = c("PECAM1", "VWF", "CLDN5", "GJA5", "HEY1", "ACKR1",
+                  "SELP", "CA4", "RGCC", "ESM1", "PROX1", "CCL21", "MKI67")
 )
 mk <- intersect(marker_panels[[SUBSET]], rownames(sub))
 
@@ -304,6 +363,17 @@ print(DimPlot(sub, reduction = "umap", group.by = "dataset_id",
               split.by = "dataset_id", ncol = 3, raster = TRUE, pt.size = 0.3) +
         NoLegend() + ggtitle(sprintf("%s - after Harmony, split by dataset", SUBSET)))
 
+print(DimPlot(sub, reduction = "umap_alt", group.by = "dataset_id",
+              shuffle = TRUE, raster = TRUE, pt.size = 0.3) +
+        ggtitle(sprintf("%s - COMPARISON: Harmony on %s (mixing %.3f)", SUBSET, ALT_KEY, mix_alt)))
+print(DimPlot(sub, reduction = "umap_alt", group.by = paste0(RES_PREFIX, 0.6),
+              label = TRUE, repel = TRUE, raster = TRUE, pt.size = 0.3) + NoLegend() +
+        ggtitle(sprintf("%s - Harmony on %s, coloured by the %s res-0.6 clusters (ARI %.3f)",
+                        SUBSET, ALT_KEY, HARMONY_KEY, ari_06)))
+print(DimPlot(sub, reduction = "umap", group.by = "tissue_class",
+              shuffle = TRUE, raster = TRUE, pt.size = 0.3) +
+        ggtitle(sprintf("%s - tissue_class (Harmony on %s)", SUBSET, HARMONY_KEY)))
+
 if ("celltype_level3" %in% colnames(sub@meta.data)) {
   print(DimPlot(sub, reduction = "umap", group.by = "celltype_level3",
                 label = TRUE, repel = TRUE, raster = TRUE, pt.size = 0.3) +
@@ -311,7 +381,7 @@ if ("celltype_level3" %in% colnames(sub@meta.data)) {
 }
 
 for (r in RESOLUTIONS) {
-  col <- paste0("RNA_snn_res.", r)
+  col <- paste0(RES_PREFIX, r)
   print(DimPlot(sub, reduction = "umap", group.by = col, label = TRUE,
                 repel = TRUE, raster = TRUE, pt.size = 0.3) + NoLegend() +
           ggtitle(sprintf("%s - resolution %s (%d clusters)",
@@ -322,13 +392,14 @@ if (length(mk) > 0) {
   print(FeaturePlot(sub, features = mk, reduction = "umap", ncol = 4,
                     raster = TRUE, pt.size = 0.3, order = TRUE) &
           theme(plot.title = element_text(size = 9)))
-  print(DotPlot(sub, features = mk, group.by = "RNA_snn_res.0.6") +
+  print(DotPlot(sub, features = mk, group.by = paste0(RES_PREFIX, 0.6)) +
           RotatedAxis() + ggtitle(sprintf("%s - markers at res 0.6", SUBSET)))
 }
 
-print(VlnPlot(sub, features = intersect(c("nFeature_RNA", "nCount_RNA", "percent.mt"),
+print(VlnPlot(sub, features = intersect(c("nFeature_RNA", "nCount_RNA", "percent.mt",
+                                          "decontX_contamination"),
                                         colnames(sub@meta.data)),
-              group.by = "RNA_snn_res.0.6", pt.size = 0, ncol = 1) & NoLegend())
+              group.by = paste0(RES_PREFIX, 0.6), pt.size = 0, ncol = 1) & NoLegend())
 
 dev.off()
 
@@ -345,7 +416,9 @@ prov <- c(
   sprintf("output   : %s", OUT),
   "",
   "ANNOTATION PROVENANCE",
-  "  subset defined by celltype_level2 (see PROVENANCE.txt from rebuild_02_subset.R).",
+  "  subset defined by celltype_level2 plus the reviewed res-0.6 routing",
+  "  (see PROVENANCE_02_subset.txt).",
+  sprintf("  assay used: %s (cluster columns %s<r>)", ASSAY, RES_PREFIX),
   "  celltype_level3 is carried for context only and is NOT trusted -- the",
   "  hierarchical pass relabelled 98.2% of the T/NK compartment as unresolved.",
   "",
@@ -367,9 +440,14 @@ prov <- c(
   "",
   "EMBEDDING",
   sprintf("  PCs computed %d, dims used 1:%d, seed %d", N_PCS, N_DIMS, SEED),
-  sprintf("  Harmony on dataset_id"),
-  sprintf("  kNN batch mixing (k=%d): before %.3f | after %.3f | target %.3f",
+  sprintf("  Harmony on %s", HARMONY_KEY),
+  sprintf("  kNN batch mixing by dataset (k=%d): before %.3f | after %.3f | target %.3f",
           K_MIX, mix_pca, mix_harm, mix_ideal),
+  sprintf("  same-tissue_class neighbours: PCA %.3f | after %.3f | random %.3f",
+          tis_pca, tis_harm, tis_rand),
+  sprintf("  COMPARISON, Harmony on %s: mixing %.3f | same-tissue %.3f | ARI vs main at res 0.6 %.3f",
+          ALT_KEY, mix_alt, tis_alt, ari_06),
+  "    (reduction harmony_alt, umap_alt, column alt_res.0.6; not used downstream)",
   sprintf("  resolutions swept: %s", paste(RESOLUTIONS, collapse = ", ")),
   "",
   "UPSTREAM EXCLUSIONS (rebuild_02_subset.R, PROVENANCE_02_subset.txt)",
@@ -377,6 +455,8 @@ prov <- c(
   "    all of GSE211644 (sorted, CD8-biased) are not in this object.",
   "  - scDblFinder doublets (per sample, whole atlas) removed.",
   "  - 'Mixed/possible doublet' (celltype_level2) excluded by construction.",
+  "  - v4: per dataset x compartment QC floor and reviewed 'drop' clusters removed;",
+  "    misrouted cells moved between subsets (rebuild_02a_routing.R).",
   "",
   "KNOWN CONSTRAINTS",
   "  - CRA001160 and GSE155698 share an older reference build with the IG_C and",
@@ -385,7 +465,8 @@ prov <- c(
   "  - GSE154778 has 45% percent.mt == 0 atlas-wide, but 0-5% inside these",
   "    compartments. Never apply a uniform percent.mt filter -- doing so",
   "    manufactures a batch effect out of a QC step.",
-  "  - Ambient RNA was removed by the authors for GSE205013 and GSE212966 only.",
+  "  - Ambient RNA was removed by the authors for GSE205013 and GSE212966 only;",
+  "    v4 runs DecontX on every dataset (rebuild_01d_decontx.R).",
   ""
 )
 writeLines(prov, PROV)

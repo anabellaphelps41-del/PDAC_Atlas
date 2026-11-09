@@ -1,28 +1,39 @@
 #!/usr/bin/env Rscript
-# rebuild_02_subset.R   (v3)
-# Step 2 of the PDAC atlas rebuild: split the harmonized object into the three
-# compartments that get their own pipeline (T/NK, stromal/CAF, B/plasma).
+# rebuild_02_subset.R   (v4)
+# Step 2 of the PDAC atlas rebuild: split the harmonized atlas into the five
+# compartments that get their own pipeline (T/NK, stromal, B/plasma, myeloid,
+# endothelial), each carrying raw counts (RNA) and DecontX counts (decontX).
 #
-# Input : <DIR>/atlas_harmonized_counts_v3.qs2   (rebuild_01_harmonize.R)
-#         <DIR>/sample_manifest.tsv               (rebuild_00m_manifest.R)
-#         <DIR>/doublets_scDblFinder_v3.tsv       (rebuild_01c_doublets.R)
-# Output: subset_TNK.qs2, subset_stromal.qs2, subset_Bcell.qs2  (+ PROVENANCE_02_subset.txt)
+# Input : <UP>/atlas_harmonized_counts_v3.qs2   (rebuild_01_harmonize.R)
+#         <UP>/sample_manifest.tsv               (rebuild_00m_manifest.R)
+#         <UP>/doublets_scDblFinder_v3.tsv       (rebuild_01c_doublets.R)
+#         <DIR>/decontx_counts.qs2, decontx_percell.tsv   (rebuild_01d_decontx.R)
+#         <DIR>/cell_routing.tsv                 (rebuild_02a_routing.R)
+# Output: <DIR>/subset_{TNK,stromal,Bcell,myeloid,endothelial}.qs2
+#         <DIR>/PROVENANCE_02_subset.txt
+# (UP = rebuild_v3, DIR = rebuild_v4; see io.R)
 #
 # Notes:
-#   - Subsetting uses celltype_level2, NOT level1. level1/level2 disagree on
-#     doublet status for 31,521 cells; level2 is the deliberate choice.
-#   - "Mixed/possible doublet" (30,140) is its own level2 value and is therefore
-#     excluded from all three subsets by construction, not by a filter.
-#   - Cells are removed, in this order of attribution, when:
-#       manifest      include_in_atlas == FALSE (blood, metastasis, non-PDAC,
-#                     GSE211644 - the reason is carried per cell)
-#       doublet       scDblFinder_class == "doublet"
-#       neutrophil    celltype_level3 == "Neutrophil-like"
-#   - Step 1 writes counts only. Each subset is normalized here
-#     (LogNormalize, scale.factor 1e4). That is a per-cell operation, so the
-#     values are identical to normalizing the whole atlas.
-#   - percent.mt IS recomputed here, purely as a diagnostic, to establish which
-#     datasets structurally lack MT genes.
+#   - Compartments start from celltype_level2, NOT level1 (level1/level2
+#     disagree on doublet status for 31,521 cells; level2 is the deliberate
+#     choice). 'Mixed/possible doublet' and 'Unassigned' are in no compartment.
+#   - Then the reviewed res-0.6 calls (cell_routing.tsv) move misrouted cells
+#     between subsets and drop the clusters marked drop. Routing is by barcode.
+#   - Cells are removed, first applicable reason, when:
+#       manifest   include_in_atlas == FALSE (blood, metastasis, non-PDAC, GSE211644)
+#       doublet    scDblFinder_class == "doublet"
+#       qc_floor   below the per dataset x compartment floor (rebuild_01d)
+#       reviewed   cluster call 'drop' (code/calls)
+#   - CHANGED FROM v3: celltype_level3 'Neutrophil-like' cells are no longer
+#     removed. v3 dropped them as a GSE155698 artifact (85.6% of them), but
+#     that figure counted blood samples. In the included samples GSE155698 has
+#     57%, GSE212966 27% and GSE205013 15%, and the myeloid subset now exists
+#     to hold them. Its lineage gate decides about them like any other cells.
+#   - Both assays are LogNormalized (scale.factor 1e4). decontX is the DEFAULT
+#     assay: steps 02b-04b select genes, cluster, find markers and call SingleR
+#     on decontaminated data. RNA keeps the raw counts; nCount_RNA and
+#     nFeature_RNA (raw) remain the QC metrics.
+#   - percent.mt is recomputed on raw counts as a diagnostic only.
 
 suppressPackageStartupMessages({
   library(Seurat)
@@ -30,13 +41,16 @@ suppressPackageStartupMessages({
   library(data.table)
 })
 
-source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj() / save_obj()
+source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj(), save_obj(), dirs
 
-ROOT <- "/ix/tbruno/anp795/PDAC_Atlas"
-DIR  <- Sys.getenv("PDAC_REBUILD_DIR", file.path(ROOT, "rebuild_v3"))
-IN   <- file.path(DIR, "atlas_harmonized_counts_v3.qs2")
-MAN  <- file.path(DIR, "sample_manifest.tsv")
-DBL  <- file.path(DIR, "doublets_scDblFinder_v3.tsv")
+UP   <- UP_DIR
+DIR  <- V4_DIR
+IN   <- file.path(UP, "atlas_harmonized_counts_v3.qs2")
+MAN  <- file.path(UP, "sample_manifest.tsv")
+DBL  <- file.path(UP, "doublets_scDblFinder_v3.tsv")
+DXM  <- file.path(DIR, "decontx_counts.qs2")
+DXC  <- file.path(DIR, "decontx_percell.tsv")
+ROUT <- file.path(DIR, "cell_routing.tsv")
 OUT  <- DIR
 
 options(width = 200)
@@ -44,6 +58,21 @@ msg <- function(...) {
   cat(sprintf("[%s] ", format(Sys.time(), "%H:%M:%S")), ..., "\n", sep = "")
   flush.console()
 }
+
+# --------------------------------------------------------------------------
+# Subset definitions. Expected counts are the atlas-wide level2 tallies after
+# step 1 (538,766 cells). A mismatch means the input object is not what this
+# script thinks it is.
+# --------------------------------------------------------------------------
+defs <- list(
+  TNK         = list(level2 = c("T/NK ambiguous", "T/NK"), expected = 193408L),
+  stromal     = list(level2 = "Stromal",                   expected =  41625L),
+  Bcell       = list(level2 = "B/plasma",                  expected =  17975L),
+  myeloid     = list(level2 = c("Myeloid", "Mast"),        expected =  95284L),
+  endothelial = list(level2 = "Vascular",                  expected =  15201L)
+)
+stopifnot(identical(names(defs), SUBSETS))
+V3_SUBSETS <- c("TNK", "stromal", "Bcell")   # the ones the reviewed calls cover
 
 # --------------------------------------------------------------------------
 # Load and validate
@@ -56,13 +85,8 @@ msg("loaded: ", format(nrow(obj), big.mark = ","), " genes x ",
 md <- obj@meta.data
 need <- c("celltype_level2", "celltype_level3", "dataset_id", "sample_id", "nCount_RNA")
 missing <- setdiff(need, colnames(md))
-if (length(missing)) {
-  stop("required metadata column(s) absent: ", paste(missing, collapse = ", "))
-}
+if (length(missing)) stop("required metadata column(s) absent: ", paste(missing, collapse = ", "))
 
-# --------------------------------------------------------------------------
-# Attach manifest + doublet calls
-# --------------------------------------------------------------------------
 man <- fread(MAN)
 md$sample_key <- paste(md$dataset_id, md$sample_id, sep = ":")
 mi <- match(md$sample_key, man$sample_key)
@@ -71,97 +95,141 @@ for (cc in c("patient_key", "patient_id_source", "tissue_class", "primary_or_met
              "patient_diagnosis", "treatment_status", "include_in_atlas", "exclude_reason")) {
   md[[cc]] <- man[[cc]][mi]
 }
+md$include_in_atlas <- as.logical(md$include_in_atlas)
 
 dbl <- fread(DBL)
 di  <- match(rownames(md), dbl$cell)
 if (anyNA(di)) stop("cells missing from the doublet table: ", sum(is.na(di)))
 md$scDblFinder_score <- dbl$scDblFinder_score[di]
 md$scDblFinder_class <- dbl$scDblFinder_class[di]
-obj@meta.data <- md
 
-msg("celltype_level2 tally:")
-print(sort(table(md$celltype_level2), decreasing = TRUE))
+dxc <- fread(DXC)
+xi  <- match(rownames(md), dxc$cell)                     # NA = out of 01d scope
+for (cc in c("decontX_contamination", "decontX_status", "qc_pass",
+             "qc_floor_log10_nFeature", "qc_floor_log10_nCount", "nCount_decontX")) {
+  md[[cc]] <- dxc[[cc]][xi]
+}
+
+rt <- fread(ROUT, colClasses = list(character = c("to_subset", "followup", "celltype_label")))
+ri <- match(rownames(md), rt$cell)
+md$v3_subset         <- rt$from_subset[ri]
+md$v3_cluster        <- rt$v3_cluster[ri]
+md$v3_action         <- rt$action[ri]
+md$v3_celltype_label <- rt$celltype_label[ri]
+md$v3_followup       <- rt$followup[ri]
+md$v3_to_subset      <- rt$to_subset[ri]
+
+# Compartment from level2, then the routing
+cmp <- rep(NA_character_, nrow(md))
+for (nm in names(defs)) cmp[md$celltype_level2 %in% defs[[nm]]$level2] <- nm
+md$compartment_level2 <- cmp
 
 # --------------------------------------------------------------------------
-# Diagnostic: is percent.mt salvageable at all?
+# Diagnostic: percent.mt on raw counts
 # --------------------------------------------------------------------------
 mt_genes <- grep("^MT-", rownames(obj), value = TRUE)
 msg("MT- genes present in harmonized matrix: ", length(mt_genes))
-
 if (length(mt_genes) > 0) {
   mt_counts <- Matrix::colSums(LayerData(obj, layer = "counts")[mt_genes, , drop = FALSE])
   pmt <- 100 * mt_counts / md$nCount_RNA
   pmt[!is.finite(pmt)] <- NA_real_
-  obj$percent.mt.recomputed <- pmt
-
-  mt_report <- do.call(rbind, lapply(split(pmt, md$dataset_id), function(x) {
-    data.frame(n           = length(x),
-               pct_zero    = round(100 * mean(x == 0, na.rm = TRUE), 1),
-               median_pmt  = round(median(x, na.rm = TRUE), 2))
-  }))
-  msg("recomputed percent.mt, per dataset:")
-  print(mt_report)
+  md$percent.mt.recomputed <- pmt
 } else {
-  obj$percent.mt.recomputed <- NA_real_
-  msg("no MT- genes at all. percent.mt is dead atlas-wide. Record and move on.")
+  md$percent.mt.recomputed <- NA_real_
 }
+obj@meta.data <- md
 
 # --------------------------------------------------------------------------
 # Exclusions. Each removed cell is attributed to the first reason that applies.
-# %in% rather than != so that NA labels are retained, not silently dropped.
 # --------------------------------------------------------------------------
 why <- rep("", nrow(md))
-why[!md$include_in_atlas]                                   <- paste0("manifest: ", md$exclude_reason[!md$include_in_atlas])
-why[!nzchar(why) & md$scDblFinder_class %in% "doublet"]     <- "scDblFinder doublet"
-why[!nzchar(why) & md$celltype_level3 %in% "Neutrophil-like"] <- "Neutrophil-like (GSE155698 artifact)"
+why[!md$include_in_atlas] <- paste0("manifest: ", md$exclude_reason[!md$include_in_atlas])
+why[!nzchar(why) & md$scDblFinder_class %in% "doublet"] <- "scDblFinder doublet"
+in_any <- !is.na(cmp) | (!is.na(md$v3_to_subset) & nzchar(md$v3_to_subset))
+lost <- !nzchar(why) & in_any & is.na(md$qc_pass)
+if (any(lost)) stop(sum(lost), " compartment cells are missing from decontx_percell.tsv")
+why[!nzchar(why) & md$qc_pass %in% FALSE] <- "QC floor (rebuild_01d)"
+rdrop <- !nzchar(why) & md$v3_action %in% "drop"
+why[rdrop] <- paste0("reviewed call: drop (v3 ", md$v3_subset[rdrop], " cluster ", md$v3_cluster[rdrop], ")")
 keep_global <- !nzchar(why)
-msg("cells kept atlas-wide: ", format(sum(keep_global), big.mark = ","), " of ",
-    format(nrow(md), big.mark = ","))
+
+# Final subset membership: level2 compartment, overridden by routing
+dest <- cmp
+routed <- !is.na(md$v3_action) & md$v3_action == "route"
+dest[routed] <- md$v3_to_subset[routed]
+md$subset_v4 <- ifelse(keep_global, dest, NA_character_)
+obj$subset_v4 <- md$subset_v4
+
+# Cells of a v3 subset with no routing row (dropped at v3 step 3, never reviewed)
+unrev <- keep_global & cmp %in% V3_SUBSETS & is.na(md$v3_action)
+unrev_tab <- as.data.frame(table(subset = cmp[unrev], dataset_id = md$dataset_id[unrev]))
+unrev_tab <- unrev_tab[unrev_tab$Freq > 0, ]
+msg("cells in v3 subsets without a reviewed call (kept, unreviewed): ", sum(unrev))
+if (nrow(unrev_tab)) print(unrev_tab, row.names = FALSE)
+if (sum(unrev) > 500) stop("more unreviewed cells than expected (the v3 step-3 batch drop was 49); ",
+                           "the routing table may not match this atlas")
+md$v3_action[unrev] <- "unreviewed"
+obj$v3_action <- md$v3_action
+
+msg("cells kept atlas-wide (in some subset): ",
+    format(sum(!is.na(md$subset_v4)), big.mark = ","))
 
 # --------------------------------------------------------------------------
-# Subset definitions. Expected counts are the step-1 compartment tallies
-# (unchanged since v2: same cells, same labels). A mismatch means the input
-# object is not what this script thinks it is.
+# DecontX matrix
 # --------------------------------------------------------------------------
-defs <- list(
-  TNK     = list(level2 = c("T/NK ambiguous", "T/NK"), expected = 193408L),
-  stromal = list(level2 = "Stromal",                   expected =  41625L),
-  Bcell   = list(level2 = "B/plasma",                  expected =  17975L)
-)
+msg("loading ", DXM)
+dx <- read_obj(DXM)
+if (!identical(rownames(dx), rownames(obj))) stop("decontX genes do not match the atlas")
+msg("decontX matrix: ", format(nrow(dx), big.mark = ","), " x ", format(ncol(dx), big.mark = ","))
 
-written  <- list()
-excluded <- list()
+# --------------------------------------------------------------------------
+# Build subsets
+# --------------------------------------------------------------------------
+written <- list(); excluded <- list(); flows <- list()
 
 for (nm in names(defs)) {
   d      <- defs[[nm]]
-  in_cmp <- md$celltype_level2 %in% d$level2
-  cells  <- rownames(md)[in_cmp & keep_global]
+  in_cmp <- cmp %in% nm
+  cells  <- rownames(md)[md$subset_v4 %in% nm]
 
   msg("---- ", nm, " ----")
-  msg("compartment total: ", format(sum(in_cmp), big.mark = ","),
-      " | expected: ",       format(d$expected,  big.mark = ","),
-      " | after exclusions: ", format(length(cells), big.mark = ","))
+  msg("level2 compartment: ", format(sum(in_cmp), big.mark = ","),
+      " | expected: ", format(d$expected, big.mark = ","),
+      " | final subset: ", format(length(cells), big.mark = ","))
   if (sum(in_cmp) != d$expected) {
     if (!nzchar(Sys.getenv("PDAC_ALLOW_COUNT_MISMATCH")))
       stop("compartment total does not match the expected count for ", nm)
     msg("*** count mismatch tolerated (PDAC_ALLOW_COUNT_MISMATCH set; test runs only) ***")
   }
-  if (length(cells) == 0) stop("empty subset for ", nm, " - check level2 spelling")
+  if (length(cells) == 0) stop("empty subset for ", nm)
 
   ex <- as.data.frame(table(reason = why[in_cmp & !keep_global]), stringsAsFactors = FALSE)
   ex <- ex[order(-ex$Freq), ]
-  msg("excluded from ", nm, ":")
+  excluded[[nm]] <- if (nrow(ex)) cbind(subset = nm, ex) else NULL
   print(ex, row.names = FALSE)
-  excluded[[nm]] <- cbind(subset = nm, ex)
+
+  # routing flows into and out of this subset
+  out_n <- sum(in_cmp & keep_global & routed & md$v3_to_subset != nm)
+  in_n  <- sum(!in_cmp & md$subset_v4 %in% nm)
+  flows[[nm]] <- data.frame(subset = nm, level2_after_exclusions = sum(in_cmp & keep_global),
+                            routed_out = out_n, routed_in = in_n, final = length(cells))
+
+  missing_dx <- setdiff(cells, colnames(dx))
+  if (length(missing_dx)) stop(length(missing_dx), " ", nm, " cells have no DecontX counts")
 
   s <- subset(obj, cells = cells)
   DefaultAssay(s) <- "RNA"
   s <- NormalizeData(s, normalization.method = "LogNormalize", scale.factor = 1e4, verbose = FALSE)
+  s[["decontX"]] <- CreateAssay5Object(counts = dx[, colnames(s)])
+  s <- NormalizeData(s, assay = "decontX", normalization.method = "LogNormalize",
+                     scale.factor = 1e4, verbose = FALSE)
+  s$nCount_decontX   <- Matrix::colSums(LayerData(s, assay = "decontX", layer = "counts"))
+  s$nFeature_decontX <- Matrix::colSums(LayerData(s, assay = "decontX", layer = "counts") > 0)
+  DefaultAssay(s) <- "decontX"
 
-  msg("cells per dataset_id:")
-  print(table(s$dataset_id))
-  msg("cells per tissue_class:")
-  print(table(s$tissue_class))
+  msg("cells per dataset_id:"); print(table(s$dataset_id))
+  msg("cells per v3 decision:"); print(table(s$v3_action, useNA = "ifany"))
+  msg("median DecontX contamination: ", round(median(s$decontX_contamination, na.rm = TRUE), 4))
 
   f <- file.path(OUT, paste0("subset_", nm, ".qs2"))
   msg("writing ", f, " (qs2)")
@@ -169,55 +237,57 @@ for (nm in names(defs)) {
   msg("wrote ", round(file.size(f) / 2^30, 2), " GB")
 
   written[[nm]] <- data.frame(
-    subset    = nm,
-    criterion = paste0('celltype_level2 %in% c("', paste(d$level2, collapse = '", "'), '")'),
+    subset = nm,
+    level2 = paste(d$level2, collapse = " + "),
     compartment = sum(in_cmp),
-    kept      = length(cells),
-    genes     = nrow(s),
-    file      = basename(f),
-    stringsAsFactors = FALSE
-  )
-
+    kept = length(cells),
+    median_contamination = round(median(s$decontX_contamination, na.rm = TRUE), 4),
+    file = basename(f), stringsAsFactors = FALSE)
   rm(s); gc(verbose = FALSE)
 }
 
 # --------------------------------------------------------------------------
-# Provenance file - answers "which cells, and why not the others?"
+# Provenance
 # --------------------------------------------------------------------------
 prov <- file.path(OUT, "PROVENANCE_02_subset.txt")
-tbl  <- do.call(rbind, written)
-ext  <- do.call(rbind, excluded)
 show <- function(x) capture.output(print(x, row.names = FALSE))
 
 writeLines(c(
-  "PDAC Atlas rebuild - compartment subsets (v3)",
+  "PDAC Atlas rebuild - compartment subsets (v4)",
   paste("generated:", format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
-  paste("by:", "rebuild_02_subset.R"),
-  paste("source:", IN),
-  paste("manifest:", MAN),
-  paste("doublets:", DBL),
+  "by: rebuild_02_subset.R",
+  paste("source:", IN), paste("manifest:", MAN), paste("doublets:", DBL),
+  paste("decontX:", DXM), paste("routing:", ROUT),
   "",
-  "ANNOTATION COLUMN USED FOR SUBSETTING: celltype_level2",
-  "  (level1/level2 disagree on doublet status for 31,521 cells; level2 is the",
-  "  deliberate choice.) 'Mixed/possible doublet' (30,140) is excluded by construction.",
+  "COMPARTMENTS: celltype_level2, then the reviewed res-0.6 calls (code/calls)",
+  "  move misrouted cells by barcode and drop the clusters marked drop.",
+  "  'Mixed/possible doublet' and 'Unassigned' are in no compartment.",
   "",
   "EXCLUSIONS (first applicable reason per cell)",
-  "  manifest     include_in_atlas == FALSE: blood, metastasis, non-PDAC tumour, GSE211644",
-  "  doublet      scDblFinder_class == 'doublet' (per-sample, whole atlas)",
-  "  neutrophil   celltype_level3 == 'Neutrophil-like' (85.6% GSE155698; single-dataset artifact)",
+  "  manifest   include_in_atlas == FALSE: blood, metastasis, non-PDAC tumour, GSE211644",
+  "  doublet    scDblFinder_class == 'doublet' (per sample, whole atlas)",
+  "  qc_floor   below median - 3 MAD of log10 nFeature/nCount, per dataset x compartment (01d)",
+  "  reviewed   cluster call 'drop' in code/calls/*_reviewed.tsv",
+  "  NOT excluded any more: celltype_level3 'Neutrophil-like' (see script header).",
   "",
-  show(ext),
+  show(do.call(rbind, excluded)),
   "",
-  "Normalization: LogNormalize(scale.factor=1e4) per subset; counts unchanged from step 1.",
+  "ROUTING FLOWS", show(do.call(rbind, flows)),
   "",
-  "Subsets written:",
-  show(tbl),
+  sprintf("UNREVIEWED: %d cells of v3 subsets had no reviewed call (kept):", sum(unrev)),
+  if (nrow(unrev_tab)) show(unrev_tab) else "  none",
   "",
-  "New metadata columns: sample_key, patient_key, patient_id_source, tissue_class,",
+  "ASSAYS: RNA = raw counts; decontX = rounded DecontX counts (DEFAULT assay).",
+  "  Both LogNormalize(scale.factor=1e4). QC metrics (nCount_RNA, nFeature_RNA)",
+  "  are raw; nCount_decontX / nFeature_decontX and decontX_contamination are added.",
+  "",
+  "Subsets written:", show(do.call(rbind, written)),
+  "",
+  "Metadata added: sample_key, patient_key, patient_id_source, tissue_class,",
   "  primary_or_metastatic, patient_diagnosis, treatment_status, scDblFinder_score/class,",
-  "  percent.mt.recomputed.",
-  "",
-  "Objects saved as qs2 (zstd, ~6x smaller than uncompressed .rds; see io.R)."
+  "  decontX_contamination/status, qc_pass + floors, compartment_level2, subset_v4,",
+  "  v3_subset, v3_cluster, v3_action, v3_to_subset, v3_celltype_label, v3_followup,",
+  "  percent.mt.recomputed."
 ), prov)
 
 msg("wrote ", prov)

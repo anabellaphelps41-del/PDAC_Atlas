@@ -1,8 +1,10 @@
 #!/usr/bin/env Rscript
 # rebuild_02b_batchgenes.R
 # Data-driven screen for genes whose detection rate is driven by dataset of
-# origin rather than biology. Runs on the three compartment subsets and writes
+# origin rather than biology. Runs on the five compartment subsets and writes
 # an exclusion list for rebuild_03 to union with the hand-written HVG mask.
+# It screens the default assay, which in v4 is decontX: the HVGs are chosen
+# on decontaminated data, so the screen looks at the same data.
 #
 # Motivation: TRAC is detected in 0.0% of CRA001160 and GSE155698 T/NK cells
 # while CD3E is at 82.8% and 75.7% in the same cells. That is structural
@@ -28,7 +30,7 @@ suppressPackageStartupMessages({
 
 source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj() / save_obj()
 
-DIR <- Sys.getenv("PDAC_REBUILD_DIR", "/ix/tbruno/anp795/PDAC_Atlas/rebuild_v3")
+DIR <- V4_DIR
 
 # A dataset needs enough cells before "zero detection" means anything. At
 # n cells and true detection rate p, P(observing zero) = (1-p)^n. At n=150 and
@@ -50,21 +52,32 @@ GRADED_MIN  <- 0.10   # graded class must reach this in at least one dataset
 # out of the HVGs so proliferation does not drive the embedding; Step 4 scores
 # them instead. RGS5/ACTA2/NKG7 graded in TNK or Bcell are contamination and
 # stay masked there.
+# myeloid and endothelial (new in v4): cell-type composition differs a lot
+# between datasets (neutrophils are 57% GSE155698), so a lineage marker can be
+# graded because one dataset simply has more of that cell type. Masking it
+# would blur exactly the populations the subset exists to separate.
 PROTECT <- list(
   TNK     = c("CD40LG", "PTGDR", "IL18RAP", "ADGRG1", "MYBL1"),
   stromal = c("DES", "MUSTN1", "MYOCD", "LDB3", "RERGL", "ATP1A2", "CASQ2",
               "MYOM1", "RGS5", "ACTA2"),
-  Bcell   = character(0)
+  Bcell   = character(0),
+  myeloid = c("CSF3R", "FCGR3B", "CXCR2", "CXCR1",          # neutrophil
+              "TPSAB1", "TPSB2", "CPA3", "MS4A2", "KIT",     # mast
+              "LILRA4", "CLEC4C", "LRRC26",                  # pDC
+              "CLEC9A", "XCR1", "CD1C", "FCER1A", "LAMP3"),  # cDC1, cDC2, mregDC
+  endothelial = c("PROX1", "LYVE1", "CCL21", "TFF3",         # lymphatic
+                  "GJA5", "HEY1", "SEMA3G",                  # arterial
+                  "ACKR1", "SELP",                           # venous
+                  "ESM1", "APLN", "PGF")                     # tip
 )
+stopifnot(identical(names(PROTECT), SUBSETS))
 
 msg <- function(...) {
   cat(sprintf("[%s] ", format(Sys.time(), "%H:%M:%S")), ..., "\n", sep = "")
   flush.console()
 }
 
-subsets <- c(TNK = "subset_TNK.qs2",
-             stromal = "subset_stromal.qs2",
-             Bcell = "subset_Bcell.qs2")
+subsets <- setNames(paste0("subset_", SUBSETS, ".qs2"), SUBSETS)
 
 exclude <- list()
 report  <- character()
@@ -154,7 +167,7 @@ for (nm in names(subsets)) {
 
   exclude[[nm]] <- union(structural, graded)
 
-  add("== ", nm, " ==")
+  add("== ", nm, " ==  (assay ", SeuratObject::DefaultAssay(s), ")")
   add("  datasets screened: ", paste(keep_ds, collapse = ", "))
   if (length(drop_ds)) add("  datasets too small to screen: ", paste(drop_ds, collapse = ", "))
   add("  structural absences: ", length(structural))

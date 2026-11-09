@@ -5,7 +5,10 @@
 # Marker discovery + contamination triage for one Harmony-integrated subset.
 #
 # Usage:  Rscript rebuild_04_markers.R <subset> [resolution]
-#         <subset>    in {stromal, TNK, Bcell}   (default: stromal)
+#         <subset>    in {TNK, stromal, Bcell, myeloid, endothelial}
+#
+# Works on the default assay (decontX in v4, RNA in v3). QC columns
+# (nFeature, nCount) stay on the raw RNA counts.
 #         [resolution] one of the swept values   (default: 0.6)
 #
 # Input : subset_<subset>_harmony.qs2  (from rebuild_03_pipeline.R)
@@ -39,11 +42,10 @@ if (!requireNamespace("presto", quietly = TRUE)) {
 args   <- commandArgs(trailingOnly = TRUE)
 SUBSET <- if (length(args) >= 1) args[1] else "stromal"
 RES    <- if (length(args) >= 2) as.numeric(args[2]) else 0.6
-stopifnot(SUBSET %in% c("stromal", "TNK", "Bcell"))
+source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj(), save_obj(), dirs
+stopifnot(SUBSET %in% SUBSETS)
 
-source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj() / save_obj()
-
-DIR      <- Sys.getenv("PDAC_REBUILD_DIR", "/ix/tbruno/anp795/PDAC_Atlas/rebuild_v3")
+DIR      <- V4_DIR
 IN       <- file.path(DIR, sprintf("subset_%s_harmony.qs2", SUBSET))
 tag      <- sprintf("%s_res%s", SUBSET, RES)
 F_ALL    <- file.path(DIR, sprintf("step4_%s_allmarkers.tsv", tag))
@@ -77,9 +79,31 @@ lineage <- list(
   endothelial = c("PECAM1", "VWF", "CDH5", "CLDN5"),
   RBC         = c("HBB", "HBA1", "HBA2"),
   acinar      = c("PRSS1", "CTRB1", "CPA1", "REG1A"),   # ambient tracer, not a cell type
-  MHCII       = c("HLA-DRA", "HLA-DRB1", "HLA-DPA1", "CD74")
+  MHCII       = c("HLA-DRA", "HLA-DRB1", "HLA-DPA1", "CD74"),
+  neutrophil  = c("CSF3R", "FCGR3B", "CXCR2", "CXCR1"),
+  mast        = c("TPSAB1", "TPSB2", "CPA3", "MS4A2"),
+  pDC         = c("LILRA4", "CLEC4C", "LRRC26", "PTCRA"),
+  schwann     = c("SOX10", "PLP1", "S100B", "MPZ", "CDH19")
 )
-NATIVE <- list(stromal = "fibroblast", TNK = "Tcell", Bcell = "Bcell")[[SUBSET]]
+# Lineages that belong in each subset. The FOREIGN flag uses the best of them
+# as the native rate (an NK cluster is native in TNK, plasma in Bcell).
+NATIVE <- list(
+  TNK         = c("Tcell", "NK"),
+  stromal     = c("fibroblast", "mural", "schwann"),
+  Bcell       = c("Bcell", "plasma"),
+  myeloid     = c("myeloid", "neutrophil", "mast", "pDC"),
+  endothelial = "endothelial"
+)[[SUBSET]]
+NATIVE_LABEL <- paste(NATIVE, collapse = "/")
+
+# Dissociation response: core immediate-early and heat-shock genes from the
+# van den Brink et al. 2017 dissociation signature (a subset, not the full
+# list). Scored in every subset so stress-defined clusters can be told apart
+# from activation states. FOS/JUN/JUNB/EGR1/HSPA1A/HSPA1B/DNAJB1 are masked
+# from HVGs in step 3; scoring them is still valid.
+DISSOC <- c("FOS", "FOSB", "JUN", "JUNB", "JUND", "ATF3", "EGR1", "IER2", "IER3",
+            "IER5", "NR4A1", "DUSP1", "ZFP36", "PPP1R15A", "BTG2", "SOCS3",
+            "HSPA1A", "HSPA1B", "HSPA8", "HSPB1", "HSPH1", "DNAJB1", "DNAJA1", "HSP90AA1")
 
 # ===================== module score programmes ==============================
 programmes <- list(
@@ -103,8 +127,30 @@ programmes <- list(
     GC      = c("BCL6","AICDA","RGS13","MEF2B","LMO2"),
     plasma  = c("MZB1","XBP1","SDC1","TNFRSF17","PRDM1","DERL3","JCHAIN"),
     prolif  = c("MKI67","TOP2A","STMN1")
+  ),
+  myeloid = list(
+    C1Q_TAM           = c("C1QA","C1QB","C1QC","APOE","APOC1"),
+    SPP1_TAM          = c("SPP1","FN1","MARCO","PLAU","VEGFA"),
+    classical_mono    = c("CD14","FCN1","S100A8","S100A9","VCAN","LYZ"),
+    nonclassical_mono = c("FCGR3A","CDKN1C","LST1","MS4A7"),
+    neutrophil        = c("CSF3R","FCGR3B","CXCR2","CXCR1","G0S2","MNDA"),
+    cDC1              = c("CLEC9A","XCR1","CADM1","IRF8"),
+    cDC2              = c("CD1C","FCER1A","CLEC10A"),
+    mregDC            = c("LAMP3","CCR7","FSCN1","CCL19","IDO1"),
+    pDC               = c("LILRA4","CLEC4C","IL3RA","LRRC26"),
+    mast              = c("TPSAB1","TPSB2","CPA3","MS4A2","KIT"),
+    prolif            = c("MKI67","TOP2A","STMN1","TYMS")
+  ),
+  endothelial = list(
+    arterial  = c("GJA5","HEY1","SEMA3G","EFNB2","GJA4"),
+    venous    = c("ACKR1","SELP","SELE","NR2F2"),
+    capillary = c("CA4","RGCC","CD36","PLVAP"),
+    tip       = c("ESM1","APLN","PGF","KDR","NID2"),
+    lymphatic = c("PROX1","LYVE1","CCL21","PDPN","TFF3"),
+    prolif    = c("MKI67","TOP2A","STMN1","TYMS")
   )
 )[[SUBSET]]
+programmes$dissociation <- DISSOC
 
 # ============================ 1. load ========================================
 ts("subset = ", SUBSET, " | resolution = ", RES)
@@ -113,12 +159,8 @@ sub <- read_obj(IN)
 ts("loaded: ", format(nrow(sub), big.mark = ","), " genes x ",
    format(ncol(sub), big.mark = ","), " cells")
 
-res_col <- paste0("RNA_snn_res.", RES)
-if (!res_col %in% colnames(sub@meta.data)) {
-  stop(sprintf("'%s' not in metadata. Available: %s", res_col,
-               paste(grep("^RNA_snn_res", colnames(sub@meta.data), value = TRUE),
-                     collapse = ", ")))
-}
+res_col <- res_col_of(sub, RES)
+ts("assay: ", DefaultAssay(sub), " | cluster column: ", res_col)
 Idents(sub) <- res_col
 sub$cluster <- Idents(sub)
 nclust <- nlevels(Idents(sub))
@@ -176,7 +218,7 @@ cat("  (S) structural batch gene - not a usable marker; (G) graded - check per d
 
 # ============================ 3. lineage purity ==============================
 ts("computing per-cluster lineage detection rates")
-dat  <- GetAssayData(sub, assay = "RNA", layer = "data")
+dat  <- GetAssayData(sub, assay = DefaultAssay(sub), layer = "data")
 idx  <- split(seq_len(ncol(sub)), Idents(sub))
 
 pct_panel <- function(genes) {
@@ -229,6 +271,8 @@ dec <- data.frame(
   median_nCount    = round(med(sub$nCount_RNA)),
   median_pct_mt    = if ("percent.mt" %in% colnames(sub@meta.data))
                        round(med(sub$percent.mt), 2) else NA,
+  median_contamination = if ("decontX_contamination" %in% colnames(sub@meta.data))
+                       round(med(sub$decontX_contamination), 3) else NA,
   round(lin, 1),
   round(score_by_cl, 3),
   top_markers      = vapply(names(idx), function(cl)
@@ -248,7 +292,7 @@ dec$flag_mt_zero    <- ifelse(!is.na(dec$median_pct_mt) & dec$median_pct_mt < 0.
 dec$flag_foreign    <- vapply(seq_len(nrow(dec)), function(i) {
   hits <- foreign[!is.na(as.numeric(lin[i, foreign])) &
                     as.numeric(lin[i, foreign]) > FOREIGN_PCT_FLAG]
-  nat  <- as.numeric(lin[i, NATIVE])
+  nat  <- suppressWarnings(max(as.numeric(lin[i, intersect(NATIVE, names(lin))]), na.rm = TRUE))
   if (length(hits) && !is.na(nat) && nat < NATIVE_PCT_FLAG)
     paste0("FOREIGN:", paste(hits, collapse = "+")) else ""
 }, character(1))
@@ -290,7 +334,7 @@ print(ggplot(lin_long, aes(panel, cluster, fill = pct)) +
         theme_minimal(base_size = 10) +
         theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
         labs(title = sprintf("%s res %s - lineage detection rate per cluster", SUBSET, RES),
-             subtitle = sprintf("native lineage for this subset: %s", NATIVE),
+             subtitle = sprintf("native lineage for this subset: %s", NATIVE_LABEL),
              x = NULL, y = "cluster"))
 
 for (cc in score_cols) {
@@ -350,6 +394,9 @@ writeLines(c(
   "    sizes, but it means p-values are not comparable across clusters of very",
   "    different size. Rank by avg_log2FC and pct.1-pct.2, not by p_val_adj.",
   sprintf("  seed=%d", SEED),
+  sprintf("  assay=%s, cluster column %s", DefaultAssay(sub), res_col),
+  "  dissociation score: core van den Brink 2017 immediate-early/heat-shock genes",
+  sprintf("    (%s)", paste(DISSOC, collapse = ", ")),
   "",
   "BATCH GENES",
   sprintf("  batch_class (allmarkers, top20) comes from %s.", basename(F_BATCH)),
@@ -362,8 +409,8 @@ writeLines(c(
   "",
   "FLAG THRESHOLDS (prompts to inspect, not verdicts)",
   sprintf("  dataset purity > %.0f%%", 100 * PURITY_FLAG),
-  sprintf("  foreign lineage detected in > %d%% of cells while native (%s) < %d%%",
-          FOREIGN_PCT_FLAG, NATIVE, NATIVE_PCT_FLAG),
+  sprintf("  foreign lineage detected in > %d%% of cells while the best native (%s) < %d%%",
+          FOREIGN_PCT_FLAG, NATIVE_LABEL, NATIVE_PCT_FLAG),
   "  median nFeature < 1000 (low complexity / ambient)",
   "  median nCount > 2.5x subset median (doublet candidate)",
   "  median percent.mt > 10 (dying) or < 0.5 (broken MT column, see GSE154778)",

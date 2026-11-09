@@ -3,7 +3,8 @@
 # rebuild_04b_singler.R   --   reference-based lineage call + the lineage gate
 #
 # Usage:  Rscript rebuild_04b_singler.R <subset> [resolution]
-#         <subset> in {stromal, TNK, Bcell}   [resolution] default 0.6
+#         <subset> in {TNK, stromal, Bcell, myeloid, endothelial}   [resolution] default 0.6
+#         SingleR runs on the default assay (decontX in v4, RNA in v3).
 #
 # Input : subset_<subset>_harmony.qs2   (already carries the resolution columns)
 #         ref/celldex_HPCA.rds, ref/celldex_BlueprintEncode.rds
@@ -57,11 +58,10 @@ ts <- function(...) cat(sprintf("[%s] %s\n", format(Sys.time(), "%H:%M:%S"),
 args   <- commandArgs(trailingOnly = TRUE)
 SUBSET <- if (length(args) >= 1) args[1] else "stromal"
 RES    <- if (length(args) >= 2) as.numeric(args[2]) else 0.6
-stopifnot(SUBSET %in% c("stromal", "TNK", "Bcell"))
+source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj(), save_obj(), dirs
+stopifnot(SUBSET %in% SUBSETS)
 
-source("/ix/tbruno/anp795/PDAC_Atlas/code/rebuild/io.R")   # read_obj() / save_obj()
-
-DIR     <- Sys.getenv("PDAC_REBUILD_DIR", "/ix/tbruno/anp795/PDAC_Atlas/rebuild_v3")
+DIR     <- V4_DIR
 REF_DIR <- "/ix/tbruno/anp795/PDAC_Atlas/ref"   # shared, not per rebuild
 IN      <- file.path(DIR, sprintf("subset_%s_harmony.qs2", SUBSET))
 tag     <- sprintf("%s_res%s", SUBSET, RES)
@@ -76,13 +76,31 @@ NTHREADS         <- max(1L, as.integer(Sys.getenv("SLURM_CPUS_PER_TASK", "4")))
 SEED             <- 42
 set.seed(SEED)
 
-# NATIVE lineage per subset, same vocabulary as rebuild_04_markers.R
-NATIVE <- list(stromal = "fibroblast", TNK = "Tcell", Bcell = "Bcell")[[SUBSET]]
-# Lineages whose PRESENCE disqualifies a cluster from being NATIVE.
+# NATIVE: the SingleR lineages (map_label vocabulary below) that belong in the
+# subset. The positive half of the gate asks that >= SINGLER_MIN_FRAC of a
+# cluster's cells carry one of them, so an NK cluster passes in TNK and a
+# plasma cluster in Bcell (v3 used one lineage and sent both to REASSIGN).
+# stromal: HPCA cannot tell pericytes from fibroblasts (both mostly land on
+# Tissue_stem_cells), so this gate is a stromal-LINEAGE check. Which stromal
+# clusters are fibroblasts, and so get CAF scores, is decided in code/calls.
+NATIVE <- list(
+  TNK         = c("Tcell", "NK"),
+  stromal     = c("fibroblast", "mural", "neural"),
+  Bcell       = c("Bcell", "plasma"),
+  myeloid     = "myeloid",
+  endothelial = "endothelial"
+)[[SUBSET]]
+NATIVE_LABEL <- paste(NATIVE, collapse = "/")
+# Marker panels whose PRESENCE disqualifies a cluster.
+# myeloid leaves out fibroblast on purpose: macrophages carry collagen reads
+# (84.5% fibroblast panel in the v3 stromal macrophage cluster), so the panel
+# would fail real macrophage clusters.
 DISQUALIFY <- list(
-  stromal = c("myeloid", "endothelial", "epithelial", "Tcell", "Bcell"),
-  TNK     = c("myeloid", "endothelial", "epithelial", "fibroblast"),
-  Bcell   = c("myeloid", "endothelial", "epithelial", "fibroblast")
+  TNK         = c("myeloid", "endothelial", "epithelial", "fibroblast"),
+  stromal     = c("myeloid", "endothelial", "epithelial", "Tcell", "Bcell"),
+  Bcell       = c("myeloid", "endothelial", "epithelial", "fibroblast"),
+  myeloid     = c("Tcell", "Bcell", "endothelial", "epithelial"),
+  endothelial = c("myeloid", "Tcell", "Bcell", "epithelial", "fibroblast")
 )[[SUBSET]]
 
 # ===================== marker panels (verbatim from rebuild_04_markers.R) =====
@@ -98,7 +116,11 @@ lineage <- list(
   endothelial = c("PECAM1", "VWF", "CDH5", "CLDN5"),
   RBC         = c("HBB", "HBA1", "HBA2"),
   acinar      = c("PRSS1", "CTRB1", "CPA1", "REG1A"),
-  MHCII       = c("HLA-DRA", "HLA-DRB1", "HLA-DPA1", "CD74")
+  MHCII       = c("HLA-DRA", "HLA-DRB1", "HLA-DPA1", "CD74"),
+  neutrophil  = c("CSF3R", "FCGR3B", "CXCR2", "CXCR1"),
+  mast        = c("TPSAB1", "TPSB2", "CPA3", "MS4A2"),
+  pDC         = c("LILRA4", "CLEC4C", "LRRC26", "PTCRA"),
+  schwann     = c("SOX10", "PLP1", "S100B", "MPZ", "CDH19")
 )
 
 # ===================== reference label -> our vocabulary ======================
@@ -121,7 +143,9 @@ map_label <- function(x) {
     endothelial = "endothelial",
     neural      = "neuron|neuroepithelial|astrocyte|schwann|glia|oligodendro",
     epithelial  = "epithelial|keratinocyte|hepatocyte",
-    myeloid     = "macrophage|monocyte|dc$|^dc|dendritic|neutrophil|myeloid|eosinophil|basophil|mast",
+    # myelocyte/CMP/GMP: HPCA has no mast-cell profile and calls mast cells
+    # (and some neutrophils) Pro-Myelocyte, Myelocyte, CMP or GMP
+    myeloid     = "macrophage|monocyte|dc$|^dc|dendritic|neutrophil|myeloid|eosinophil|basophil|mast|myelocyte|^cmp$|^gmp$|granulocyte",
     Tcell       = "t_cell|t-cell|t cells|cd4\\+|cd8\\+|tregs",
     NK          = "nk_cell|nk cell|nk cells",
     Bcell       = "b_cell|b-cell|b cells|pre-b|pro-b",
@@ -145,12 +169,8 @@ sub <- read_obj(IN)
 ts("loaded: ", format(nrow(sub), big.mark = ","), " genes x ",
    format(ncol(sub), big.mark = ","), " cells")
 
-res_col <- paste0("RNA_snn_res.", RES)
-if (!res_col %in% colnames(sub@meta.data)) {
-  stop(sprintf("'%s' not in metadata. Available: %s", res_col,
-               paste(grep("^RNA_snn_res", colnames(sub@meta.data), value = TRUE),
-                     collapse = ", ")), call. = FALSE)
-}
+res_col <- res_col_of(sub, RES)
+ts("assay: ", DefaultAssay(sub), " | cluster column: ", res_col)
 Idents(sub) <- res_col
 cl <- Idents(sub)
 ts("clusters: ", nlevels(cl))
@@ -158,7 +178,7 @@ ts("clusters: ", nlevels(cl))
 # SingleR wants log-normalised expression. The data layer is
 # LogNormalize(scale.factor=1e4), carried unchanged from step 1
 # (rebuild_02_subset.R lines 14-16). Correct input, no re-normalisation.
-expr <- GetAssayData(sub, assay = "RNA", layer = "data")
+expr <- GetAssayData(sub, assay = DefaultAssay(sub), layer = "data")
 ts("expression matrix: ", paste(dim(expr), collapse = " x "))
 
 # ============================ 2. SingleR, per cell ===========================
@@ -246,6 +266,8 @@ lin <- as.data.frame(lapply(lineage, pct_panel)); rownames(lin) <- names(idx)
 # The marker panels keep the negative half because that is where they work --
 # CD68/LYZ/C1QA, PECAM1/VWF/CDH5 and EPCAM/KRT19 are not ambient in this tissue.
 disq <- intersect(DISQUALIFY, names(lineage))
+native_frac <- vapply(idx, function(ii) mean(sub[["singler_HPCA"]][ii, 1] %in% NATIVE), numeric(1))
+show_panels <- intersect(unique(c(NATIVE, disq, "mural", "MHCII", "acinar")), names(lineage))
 gate <- data.frame(
   cluster        = names(idx),
   n_cells        = vapply(idx, length, integer(1)),
@@ -255,11 +277,12 @@ gate <- data.frame(
   singler_BP     = blue[, "label"],
   BP_frac        = round(as.numeric(blue[, "frac"]), 3),
   refs_agree     = hpca[, "label"] == blue[, "label"],
-  round(lin[, unique(c(NATIVE, disq, "mural", "MHCII", "acinar"))], 1),
+  HPCA_native_frac = round(native_frac, 3),
+  round(lin[, show_panels, drop = FALSE], 1),
   row.names = NULL, check.names = FALSE
 )
 
-gate$positive  <- gate$singler_HPCA == NATIVE & gate$HPCA_frac >= SINGLER_MIN_FRAC
+gate$positive  <- gate$HPCA_native_frac >= SINGLER_MIN_FRAC
 gate$worst_foreign <- vapply(seq_len(nrow(gate)), function(i) {
   v <- as.numeric(lin[i, disq]); names(v) <- disq
   v <- v[!is.na(v)]
@@ -270,13 +293,13 @@ gate$negative  <- !nzchar(gate$worst_foreign)
 gate$gate_pass <- gate$positive & gate$negative
 
 gate$verdict <- ifelse(
-  gate$gate_pass, sprintf("PASS - score %s programmes here", NATIVE),
-  ifelse(!gate$positive & gate$singler_HPCA != NATIVE,
+  gate$gate_pass, sprintf("PASS - %s lineage", NATIVE_LABEL),
+  ifelse(!gate$positive & !(gate$singler_HPCA %in% NATIVE),
          sprintf("REASSIGN - SingleR calls this %s (%.0f%%)", gate$singler_HPCA, 100 * gate$HPCA_frac),
          ifelse(!gate$negative,
                 sprintf("FAIL - foreign marker signal %s", gate$worst_foreign),
                 sprintf("FAIL - SingleR %s only %.0f%% (below %.0f%%)",
-                        gate$singler_HPCA, 100 * gate$HPCA_frac, 100 * SINGLER_MIN_FRAC))))
+                        NATIVE_LABEL, 100 * gate$HPCA_native_frac, 100 * SINGLER_MIN_FRAC))))
 
 write.table(gate, F_GATE, sep = "\t", quote = FALSE, row.names = FALSE)
 ts("wrote ", F_GATE)
@@ -327,7 +350,7 @@ print(ggplot(gl, aes(cluster, n, fill = pass)) + geom_col() +
         theme_minimal(base_size = 11) +
         labs(title = sprintf("%s res %s - clusters passing the lineage gate", SUBSET, RES),
              subtitle = sprintf("positive: SingleR %s >= %.0f%%   negative: no %s panel > %d%%",
-                                NATIVE, 100 * SINGLER_MIN_FRAC,
+                                NATIVE_LABEL, 100 * SINGLER_MIN_FRAC,
                                 paste(disq, collapse = "/"), FOREIGN_PCT_FLAG),
              y = "cells", x = "cluster"))
 dev.off()
@@ -363,8 +386,9 @@ writeLines(c(
   sprintf("  HPCA/Blueprint agreement: %.1f%% of cells", 100 * mean(agree)),
   "",
   "THE GATE",
-  sprintf("  positive : SingleR (HPCA) top lineage == '%s' in >= %.0f%% of the cluster",
-          NATIVE, 100 * SINGLER_MIN_FRAC),
+  sprintf("  positive : SingleR (HPCA) lineage in {%s} for >= %.0f%% of the cluster's cells",
+          paste(NATIVE, collapse = ", "), 100 * SINGLER_MIN_FRAC),
+  sprintf("  assay    : %s, cluster column %s", DefaultAssay(sub), res_col),
   sprintf("  negative : no panel in {%s} detected above %d%%",
           paste(disq, collapse = ", "), FOREIGN_PCT_FLAG),
   sprintf("  result   : %d of %d clusters pass (%s cells, %.1f%% of subset)",
