@@ -73,7 +73,12 @@ SingleR references are cached once on a node with internet:
 - **Reviewed calls (v4)**: `calls/*_reviewed.tsv` decide, per v3 res-0.6
   cluster, keep / drop / route to another subset. Misrouted cells are moved,
   not deleted. Myeloid (with mast) and endothelial subsets exist from v4 to
-  receive them. `Neutrophil-like` cells are no longer removed.
+  receive them. `Neutrophil-like` cells are no longer removed. The `action`
+  column can override `reviewer_call` when later evidence changes a decision;
+  `check_result` then says why. Example: TNK 16 was first routed to myeloid
+  as neutrophils, then dropped. After DecontX it showed a median 21.9%
+  hemoglobin and 0.67 contamination, and sharing the neutrophil label had
+  made hemoglobin native to the GSE205013 neutrophil profile.
 - **Batch key**: Harmony on `dataset_id` (`PDAC_HARMONY_KEY` to change). Step
   03 also runs Harmony on `sample_key` as a comparison and reports mixing,
   same-tissue neighbours and ARI.

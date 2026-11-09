@@ -10,7 +10,12 @@ review added `celltype_label`, `reviewer_call`, `review` (agree / verify /
 disagree) and `reviewer_note`. The draft columns are never edited; the
 reviewer columns win where the two disagree. `check_result` records checks
 run afterwards on existing v3 outputs (scDblFinder scores, nCount, dataset
-enrichment over baseline). The reasoning and order of the cleanup are in the
+enrichment over baseline). `action`, `route_to`, `followup` and
+`lineage_reviewed` are what `rebuild_02a_routing.R` acts on. They follow
+`reviewer_call` unless a later decision overrides it, in which case
+`check_result` says why. Example: TNK 16 was routed to myeloid in the review,
+then dropped after DecontX showed it is mostly red-cell / low-quality droplets.
+The reasoning and order of the cleanup are in the
 Claude Doc "PDAC atlas: cluster-call cleanup plan (B, stromal, T/NK, res 0.6)".
 
 Evidence comes from `rebuild_v3/step4_<subset>_res<res>_decision.tsv`,
