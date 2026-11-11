@@ -25,6 +25,8 @@ cluster numbers.
 | 04b | `rebuild/rebuild_04b_singler.R <subset> [res]` | harmony object, `ref/celldex_*.rds` | SingleR lineage gate (**re-saves its input**) |
 | 04c | `rebuild/rebuild_04c_subcluster.R <subset> <res> <cluster> <markersA> <markersB>` | harmony object | `subcluster_res<res>` column, marker-defined (**re-saves its input**) |
 | 05 | `rebuild/rebuild_05_apply_calls.R <subset> [res]` | harmony object (read only), `calls/cluster_calls_<subset>_v4_res<res>.tsv`, `calls/v4_run2_decisions.tsv`, `calls/subcluster_labels_v4_res<res>.tsv` | `subset_<subset>_final.qs2` (kept cells, `celltype_v4` / `lineage_v4`, flags), `step5_*_cells.tsv`, `step5_*_summary.tsv` |
+| 05b | `rebuild/rebuild_05b_figures.R <subset>` | `subset_<subset>_final.qs2` (read only) | `figures_step5/<subset>/`: overview UMAP, one panel per cell type, dataset / tissue panels, flags, marker dot plot, per-sample composition |
+| 05c | `rebuild/rebuild_05c_atlas_umap.R [all\|embed\|plot]` | the five `subset_<subset>_final.qs2` (read only), 02b batch-gene lists | `atlas_v4_embedding.qs2`, `atlas_v4_umap.tsv.gz`: one display-only embedding of all kept cells (step 03 recipe, Harmony on `dataset_id`, no clustering); `figures_step5/atlas/` (incl. `0_by_subset.png` and `0_all_clusters.png`, all 79 clusters in one colour family per subset), `figures_step5/by_cluster/<subset>.png` (the subset's own UMAP coloured by cluster) |
 | 00 | `rebuild/rebuild_00_provenance_audit.R` | subsets | metadata audit tables |
 
 02a runs before 01d because DecontX takes its cell-type labels from the

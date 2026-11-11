@@ -15,6 +15,8 @@
 #         SUBSETS="stromal Bcell" bash code/slurm/run_v4.sh 03
 #         bash code/slurm/run_v4.sh 05          # apply the reviewed calls (05 only)
 #         PDAC_DRAFT_CALLS=1 bash code/slurm/run_v4.sh 05   # same, draft calls allowed
+#         bash code/slurm/run_v4.sh 05b         # figures of the final objects (05b only)
+#         bash code/slurm/run_v4.sh 05c         # atlas-level UMAP of all final cells (05c only)
 #
 # 05 is never chained after 04b: the call tables have to be reviewed in
 # between. It only reads the harmony objects, so the subsets run in parallel.
@@ -42,6 +44,18 @@ if [[ $FROM == 05 ]]; then
     j=$(submit -J "rb4_05_${sub}_$RES" "$S/05_apply_calls.sbatch" "$sub" "$RES")
     echo "  05 $sub res $RES -> job $j"
   done
+  exit 0
+fi
+if [[ $FROM == 05b ]]; then
+  for sub in $SUBSETS; do
+    j=$(submit -J "rb4_05b_${sub}" "$S/05b_figures.sbatch" "$sub")
+    echo "  05b $sub -> job $j"
+  done
+  exit 0
+fi
+if [[ $FROM == 05c ]]; then
+  j=$(submit -J rb4_05c_atlas "$S/05c_atlas_umap.sbatch" all)
+  echo "  05c atlas -> job $j"
   exit 0
 fi
 
