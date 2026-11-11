@@ -31,6 +31,9 @@
 #     Per-cell flags from the v4 run-1 decisions (set in 02) are kept as they are.
 #   - Labels: celltype_v4 / lineage_v4 from the call table, replaced by the
 #     subcluster label where the cluster was split (rebuild_04c).
+#     celltype_pool_v4 is the optional pool_label column (clusters the review
+#     pools for composition: same cell type split by sample, depth or ambient),
+#     and celltype_v4 where pool_label is empty.
 #   - The harmony object is only read. Its embeddings and graphs are kept for
 #     the kept cells; nothing is re-clustered.
 # =============================================================================
@@ -136,6 +139,11 @@ if (any(split) || nrow(sl)) {
   lineage[has]  <- sl$lineage[si[has]]
   celltype[has] <- sl$celltype_label[si[has]]
 }
+pool_lab <- if ("pool_label" %in% names(tab)) tab$pool_label[ti] else rep("", length(ti))
+if (any(split & nzchar(pool_lab)))
+  stop("clusters ", paste(unique(cl[split & nzchar(pool_lab)]), collapse = ", "),
+       " are split in ", scol, " and also have a pool_label; pool them by subcluster instead")
+celltype_pool <- ifelse(nzchar(pool_lab), pool_lab, celltype)
 
 flag <- if ("cell_flag" %in% names(md)) as.character(md$cell_flag) else rep("", nrow(md))
 flag[is.na(flag)] <- ""
@@ -159,14 +167,14 @@ cells <- data.table(
   sample_key = if ("sample_key" %in% names(md)) md$sample_key else NA_character_,
   dataset_id = if ("dataset_id" %in% names(md)) md$dataset_id else NA_character_,
   cluster = cl, subcluster = subcl, action, call_source = src,
-  lineage_v4 = lineage, celltype_v4 = celltype,
+  lineage_v4 = lineage, celltype_v4 = celltype, celltype_pool_v4 = celltype_pool,
   cell_flag = flag, flag_source = fsrc, exclude_from_de_lr = excl, drop_reason = why)
 fwrite(cells, CELLS_OUT, sep = "\t")
 
 summ <- cells[, .(n_cells = .N, n_samples = uniqueN(sample_key),
                   pct_flagged = round(100 * mean(nzchar(cell_flag)), 1),
                   pct_excluded_de_lr = round(100 * mean(exclude_from_de_lr), 1)),
-              by = .(cluster, subcluster, action, call_source, lineage_v4, celltype_v4)]
+              by = .(cluster, subcluster, action, call_source, lineage_v4, celltype_v4, celltype_pool_v4)]
 summ <- summ[order(as.integer(cluster), subcluster)]
 fwrite(summ, SUM_OUT, sep = "\t")
 msg("wrote ", CELLS_OUT, " and ", SUM_OUT)
@@ -177,6 +185,7 @@ sub$cluster_v4         <- cl
 sub$subcluster_v4      <- subcl
 sub$lineage_v4         <- lineage
 sub$celltype_v4        <- celltype
+sub$celltype_pool_v4   <- celltype_pool
 sub$call_source        <- src
 sub$cell_flag          <- flag
 sub$flag_source        <- fsrc
@@ -190,6 +199,9 @@ msg("wrote ", OBJ_OUT, ": ", ncol(fin), " of ", ncol(sub), " cells")
 by_lin <- cells[action == "keep", .(cells = .N, flagged = sum(nzchar(cell_flag)), excluded_de_lr = sum(exclude_from_de_lr)),
                 by = lineage_v4][order(-cells)]
 by_flag <- cells[action == "keep" & nzchar(cell_flag), .(cells = .N), by = .(cell_flag, flag_source)][order(-cells)]
+by_pool <- cells[action == "keep" & celltype_pool_v4 != celltype_v4,
+                 .(clusters = paste(sort(unique(as.integer(cluster))), collapse = "+"), cells = .N),
+                 by = celltype_pool_v4][order(-cells)]
 writeLines(c(
   sprintf("PROVENANCE - Step 5 apply cluster calls - %s %s%s", SUBSET, rc, if (DRAFT) "  ** DRAFT **" else ""),
   sprintf("generated: %s", format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
@@ -207,8 +219,11 @@ writeLines(c(
   "", "PER CLUSTER", show(summ),
   "", "KEPT CELLS BY LINEAGE", show(by_lin),
   "", "KEPT CELLS BY FLAG", if (nrow(by_flag)) show(by_flag) else "  none",
+  "", "POOLED LABELS (kept cells whose celltype_pool_v4 differs from celltype_v4; clusters listed",
+  "  are those relabelled, the target cluster keeps its own label)",
+  if (nrow(by_pool)) show(by_pool) else "  none",
   "", "New metadata columns in the final object: cluster_v4, subcluster_v4, lineage_v4,",
-  "  celltype_v4 (also the Idents), call_source, flag_source; cell_flag and",
+  "  celltype_v4 (also the Idents), celltype_pool_v4, call_source, flag_source; cell_flag and",
   "  exclude_from_de_lr are updated. Cells with exclude_from_de_lr stay out of DE",
   "  and ligand-receptor work."
 ), PROV)
