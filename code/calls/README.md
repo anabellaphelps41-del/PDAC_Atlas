@@ -46,8 +46,9 @@ Two rounds so far:
     TNK c5. Cells that already carry a flag keep it.
 
   The 2026-11-10 review added 11 rows:
-  - drops: TNK c17 (T/B doublets), stromal c11 (CNV+ osteogenic cells of
-    P19 and tumour-fibroblast doublets of GSE154778:P01), stromal c12 and
+  - drops: TNK c17 (T/B doublets), stromal c11 (CNV+ tumour cells with
+    mesenchymal programs from P19 and GSE154778:P01; the P01 cells were
+    first read as doublets, corrected 2026-11-11), stromal c12 and
     myeloid c18 (low-quality droplets);
   - flags with `exclude_from_de_lr`: TNK c15 (`ambient_RBC`), Bcell c8
     (`ambient_mixed`), myeloid c12 (`few_donors`, ADJ2/P06), endothelial c4
